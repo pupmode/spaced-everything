@@ -1,0 +1,10 @@
+{
+  "id": "spaced-everything",
+  "name": "Spaced Everything",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Spaced repetition for your notes — port of spaced-inbox by Issa Rice.",
+  "author": "pupmode",
+  "authorUrl": "https://github.com/pupmode",
+  "isDesktopOnly": false
+}

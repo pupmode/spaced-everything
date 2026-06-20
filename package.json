@@ -1,0 +1,21 @@
+{
+  "name": "spaced-everything",
+  "version": "0.1.0",
+  "description": "Spaced repetition for developing ideas",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production"
+  },
+  "keywords": [],
+  "author": "Nick",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^16.11.6",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.28.1",
+    "obsidian": "latest",
+    "tslib": "2.4.0",
+    "typescript": "4.7.4"
+  }
+}
