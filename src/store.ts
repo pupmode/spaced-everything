@@ -3,7 +3,7 @@
 import { Plugin } from "obsidian";
 import { PluginData, NoteRecord } from "./types";
 
-const EMPTY_DATA: PluginData = { notes: {}, reviewLoadLog: [] };
+const EMPTY_DATA: PluginData = { notes: {}, reviewLoadLog: [], reviewHistory: [] };
 
 export async function loadStore(plugin: Plugin): Promise<PluginData> {
   const saved = await plugin.loadData();

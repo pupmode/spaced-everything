@@ -9,6 +9,16 @@ export interface NoteRecord {
   createdOn: string; // ISO date "YYYY-MM-DD"
   reviewedCount: number;
   noteState: NoteState;
+  active?: boolean;
+  decks?: string[];
+}
+
+export interface CramSession {
+  remaining: string[]; // filepaths
+  passed: string[]; // filepaths
+  failed: string[]; // filepaths
+  progressLog: ("pass" | "fail")[];
+  currentRoundSize: number;
 }
 
 export interface SourceFolder {
@@ -27,23 +37,35 @@ export type NoteState =
   | "taxing"       // interval * easeFactor * 1.5  / 100 — see less often  
   | "revisit";     // interval * 0.9 (no easeFactor)     — see soon; matches again_interval()
 
-export interface PluginData {
-  notes: Record<string, NoteRecord>; // keyed by sha1sum
-  reviewLoadLog: Array<{ timestamp: string; numNotes: number; numDue: number }>;
+export interface ReviewEvent {
+  timestamp: string; // ISO datetime "YYYY-MM-DDTHH:mm:ss"
+  noteHash: string;
+  reaction: NoteState;
 }
 
+export interface PluginData {
+  notes: Record<string, NoteRecord>;
+  reviewLoadLog: Array<{ timestamp: string; numNotes: number; numDue: number }>;
+  reviewHistory: ReviewEvent[];
+  cramSessions?: Record<string, CramSession>; // keyed by deck name; "default" for the default deck
+  deckLastUsed?: Record<string, string>; // keyed by deck name; ISO datetime for sorting
+}
 export interface SpacedEverythingSettings {
   sourceScope: "vault" | "folder";
-  sourceFolders: SourceFolder[]; // ← was: string[]
+  sourceFolders: SourceFolder[]; 
   evergreenFolder: string;
   initialInterval: number;
   defaultEaseFactor: number;
+  recentUndueThreshold: number; 
+  excitingThreshold: number; 
 }  
 
 export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
   sourceScope: "vault",
   sourceFolders: [],
   evergreenFolder: "Evergreen",
-  initialInterval: 50,
+  initialInterval: 1,
   defaultEaseFactor: 300,
+  recentUndueThreshold: 0.5,
+  excitingThreshold: 0.7
 };

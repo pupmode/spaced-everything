@@ -1,6 +1,9 @@
 // Direct port of spaced_inbox.py scheduling logic
 
-import { NoteRecord, NoteState, SpacedEverythingSettings } from "./types";
+import { NoteRecord, NoteState, SpacedEverythingSettings } from "./types";  
+
+const MAX_INTERVAL = 365; // days — prevents notes from disappearing for years  
+const MAX_EASE = 500;     // percentage — prevents runaway acceleration
 
 function folderWeight(filepath: string, settings: SpacedEverythingSettings): number {
   if (settings.sourceScope !== "folder") return 1;
@@ -44,7 +47,22 @@ export function nextInterval(note: NoteRecord, reaction: NoteState | "skip"): nu
     normal: 1.0,
   };
   const m = multipliers[reaction] ?? 1.0;
-  return Math.max(1, Math.floor((interval * easeFactor * m) / 100));
+  return Math.min(MAX_INTERVAL, Math.max(1, Math.floor((interval * easeFactor * m) / 100)));
+}
+
+export function nextEaseFactor(note: NoteRecord, reaction: NoteState | "skip"): number {
+  if (reaction === "skip" || reaction === "revisit") return note.easeFactor;
+  const deltas: Partial<Record<NoteState, number>> = {
+    exciting: +20,
+    interesting: +10,
+    yeah: 0,
+    lol: 0,
+    meh: -10,
+    cringe: -15,
+    taxing: -20,
+  };
+  const delta = deltas[reaction] ?? 0;
+    return Math.min(MAX_EASE, Math.max(130, note.easeFactor + delta));
 }
 
 export function getDueNotes(notes: NoteRecord[]): NoteRecord[] {
@@ -64,33 +82,57 @@ export function weightedRandom<T>(candidates: T[], weights: number[]): T | null 
 }
 
 // Port of pick_note_to_review()
-export function pickNoteToReview(
-  notes: NoteRecord[],
-  settings: SpacedEverythingSettings, 
-): NoteRecord | null {
+export function pickNoteToReview(notes: NoteRecord[], settings: SpacedEverythingSettings): NoteRecord | null {
   const rand = Math.random();
 
   // 50% chance: recently-created unreviewed note
-  if (rand < 0.5) {
+  if (rand < settings.recentUndueThreshold) {
     const recentUnreviewed = notes.filter((n) => {
       const age = daysBetween(n.createdOn, today());
-      return n.interval > 0 && n.noteState === "normal" && age >= 50 && age <= 100 && n.reviewedCount === 0;
+      return n.interval >= 0 && n.noteState === "normal" && age >= 50 && age <= 100 && n.reviewedCount === 0;
     });
     if (recentUnreviewed.length) {
       return recentUnreviewed[Math.floor(Math.random() * recentUnreviewed.length)];
     }
   }
 
+  // Always prioritize "revisit" notes (user explicitly flagged to see soon)
+  const revisitDue = notes.filter((n) => noteIsDue(n) && n.noteState === "revisit");
+  if (revisitDue.length) {
+    const weights = revisitDue.map(
+      (n) => Math.pow(Math.max(1, numDaysOverdue(n)), 2) * folderWeight(n.filepath, settings),
+    );
+    const picked = weightedRandom(revisitDue, weights);
+    if (picked) return picked;
+  }
+
   // 20% chance: exciting note (weighted by overdue²)
-  if (rand < 0.7) {
+  if (rand < settings.excitingThreshold) {
     const exciting = notes.filter((n) => noteIsDue(n) && n.noteState === "exciting");
-    const weights = exciting.map((n) => Math.pow(Math.max(1, numDaysOverdue(n)), 2));
+    const weights = exciting.map(
+      (n) => Math.pow(Math.max(1, numDaysOverdue(n)), 2) * folderWeight(n.filepath, settings),
+    );
     const picked = weightedRandom(exciting, weights);
     if (picked) return picked;
   }
 
   // Fallback: any due note, weighted by overdue² × folder quota
+  const stateWeight: Partial<Record<NoteState, number>> = {
+    exciting: 1.5,
+    interesting: 1.2,
+    yeah: 1.0,
+    lol: 0.9,
+    meh: 0.6,
+    cringe: 0.4,
+    taxing: 0.3,
+    normal: 1.0,
+  };
   const allDue = notes.filter((n) => noteIsDue(n));
-  const weights = allDue.map((n) => Math.pow(Math.max(1, numDaysOverdue(n)), 2) * folderWeight(n.filepath, settings));
+  const weights = allDue.map(
+    (n) =>
+      Math.pow(Math.max(1, numDaysOverdue(n)), 2) *
+      folderWeight(n.filepath, settings) *
+      (stateWeight[n.noteState] ?? 1.0),
+  );
   return weightedRandom(allDue, weights);
 }

@@ -1,13 +1,7 @@
-//← syncVault(): reconcile vault files ↔ store
-
-// Port of reload_db() from spaced_inbox.py
-// Reconciles vault .md files against the schedule store.
-
 import { TFile, Vault } from "obsidian";
 import { PluginData, SpacedEverythingSettings } from "./types";
 import { today, noteIsDue } from "./scheduler";
 
-// crypto import
 async function sha1(content: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(content);
@@ -16,7 +10,6 @@ async function sha1(content: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// Strip YAML frontmatter before hashing so metadata changes don't reset schedule
 function stripFrontmatter(content: string): string {
   if (!content.startsWith("---")) return content;
   const end = content.indexOf("\n---", 3);
@@ -30,7 +23,8 @@ export async function syncVault(
 ): Promise<PluginData> {
   const files: TFile[] = vault.getMarkdownFiles().filter((f) => {
     if (settings.sourceScope === "folder") {
-        return settings.sourceFolders.some((e) => f.path.startsWith(e.path + "/"));      }
+      return settings.sourceFolders.some((e) => f.path.startsWith(e.path + "/"));
+    }
     return true;
   });
 
@@ -43,10 +37,8 @@ export async function syncVault(
     currentHashes.add(hash);
 
     if (data.notes[hash] && data.notes[hash].interval >= 0) {
-      // Existing active note — update filepath in case it moved
       data.notes[hash].filepath = file.path;
     } else if (data.notes[hash]) {
-      // Was soft-deleted/archived, now back — resurrect
       data.notes[hash] = {
         ...data.notes[hash],
         filepath: file.path,
@@ -57,19 +49,31 @@ export async function syncVault(
         noteState: "normal",
       };
     } else {
-      // New note
-      data.notes[hash] = {
-        sha1sum: hash,
-        filepath: file.path,
-        easeFactor: settings.defaultEaseFactor,
-        interval: settings.initialInterval,
-        lastReviewedOn: daysAgo(settings.initialInterval),
-        createdOn: today(),
-        reviewedCount: 0,
-        noteState: "normal",
-      };
+      // Check if an existing record has this filepath (body was edited — preserve SRS data)
+      const existingByPath = Object.values(data.notes).find((n) => n.filepath === file.path);
+      if (existingByPath) {
+        data.notes[hash] = { ...existingByPath, sha1sum: hash, filepath: file.path };
+        delete data.notes[existingByPath.sha1sum];
+      } else {
+        // Truly new note
+        data.notes[hash] = {
+          sha1sum: hash,
+          filepath: file.path,
+          easeFactor: settings.defaultEaseFactor,
+          interval: settings.initialInterval,
+          lastReviewedOn: daysAgo(settings.initialInterval),
+          createdOn: today(),
+          reviewedCount: 0,
+          noteState: "normal",
+        };
+      }
     }
 
+    // Sync active flag from frontmatter into store
+    const activeFlag = parseFrontmatterActive(raw);
+    if (activeFlag !== undefined) {
+      data.notes[hash].active = activeFlag;
+    }
   }
 
   // Soft-delete notes no longer in vault
@@ -105,4 +109,14 @@ function daysAgo(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
+}
+
+function parseFrontmatterActive(raw: string): boolean | undefined {
+  if (!raw.startsWith("---")) return undefined;
+  const end = raw.indexOf("\n---", 3);
+  if (end === -1) return undefined;
+  const fm = raw.slice(3, end);
+  const match = fm.match(/^active:\s*["']?(true|false)["']?\s*$/m);
+  if (!match) return undefined;
+  return match[1] === "true";
 }

@@ -130,6 +130,34 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
         }),
       );
 
+      new Setting(containerEl)
+        .setName("Recent-note priority threshold")
+        .setDesc("Probability (0–1) of trying to show a recently-created unreviewed note first. Default: 0.5")
+        .addText((text) =>
+          text.setValue(String(this.plugin.settings.recentUndueThreshold)).onChange(async (v) => {
+            const n = parseFloat(v);
+            if (!isNaN(n) && n >= 0 && n <= 1) {
+              this.plugin.settings.recentUndueThreshold = n;
+              await this.plugin.saveSettings();
+            }
+          }),
+        );
+
+      new Setting(containerEl)
+        .setName("Exciting-note priority threshold")
+        .setDesc(
+          "Cumulative probability (0–1) of trying to show an exciting note. Must be > recent-note threshold. Default: 0.7",
+        )
+        .addText((text) =>
+          text.setValue(String(this.plugin.settings.excitingThreshold)).onChange(async (v) => {
+            const n = parseFloat(v);
+            if (!isNaN(n) && n >= 0 && n <= 1) {
+              this.plugin.settings.excitingThreshold = n;
+              await this.plugin.saveSettings();
+            }
+          }),
+        );
+
     // Danger zone  
   containerEl.createEl("h3", { text: "Danger Zone" });  
     
