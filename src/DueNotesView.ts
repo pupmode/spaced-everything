@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import { noteIsDue, numDaysOverdue } from "./scheduler";
 import { ReviewModal } from "./ReviewModal";
+import { getNotesFromVault } from "./frontmatter";
 import type SpacedEverythingPlugin from "./main";
 
 export const DUE_NOTES_VIEW_TYPE = "spaced-everything-due-notes";
@@ -34,7 +35,7 @@ export class DueNotesView extends ItemView {
     const { contentEl } = this;
     contentEl.empty();
 
-    const allNotes = Object.values(this.plugin.data.notes).filter((n) => n.interval >= 0);
+    const allNotes = getNotesFromVault(this.app, this.plugin.settings).filter((n) => n.interval >= 0);
     const dueNotes = allNotes.filter((n) => noteIsDue(n)).sort((a, b) => numDaysOverdue(b) - numDaysOverdue(a));
 
     if (dueNotes.length === 0) {

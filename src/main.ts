@@ -1,36 +1,21 @@
 // ← Plugin entry point, registers commands & events
 
 import { Plugin, TFile, TFolder, Menu, Notice, App, Modal } from "obsidian";
-import { SpacedEverythingSettings, NoteRecord, DEFAULT_SETTINGS, PluginData } from "./types";
 import { loadStore, saveStore } from "./store";
-import { syncVault } from "./sync";
-import { pickNoteToReview, noteIsDue} from "./scheduler";
 import { ReviewModal } from "./ReviewModal";
-import { writeFrontmatterActive, writeFrontmatterDecks } from "./frontmatter";  
 import { SpacedEverythingSettingsTab } from "./SettingsTab";
 import { DueNotesView, DUE_NOTES_VIEW_TYPE } from "./DueNotesView";
-import { StatsView, STATS_VIEW_TYPE } from "./StatsView";  
-import { DeckPickerModal } from "./DeckPickerModal";
+import { StatsView, STATS_VIEW_TYPE } from "./StatsView";
+import { DeckPickerModal } from "./ActiveModal";
+import { SpacedEverythingSettings, DEFAULT_SETTINGS, PluginData } from "./types";
+import { getNotesFromVault, writeFrontmatterActive, writeFrontmatterDecks } from "./frontmatter";
+import { pickNoteToReview, noteIsDue, today } from "./scheduler";
 
 export default class SpacedEverythingPlugin extends Plugin {
   settings: SpacedEverythingSettings;
   data: PluginData;
 
   private statusBarItem: HTMLElement;
-  private noteFromFilepath(filepath: string): NoteRecord {
-    const stored = Object.values(this.data.notes).find((n) => n.filepath === filepath);
-    if (stored) return stored;
-    return {
-      sha1sum: filepath,
-      filepath,
-      easeFactor: 300,
-      interval: 0,
-      lastReviewedOn: "",
-      createdOn: "",
-      reviewedCount: 0,
-      noteState: "normal",
-    };
-  }
 
   async onload() {
     await this.loadSettings();
@@ -55,18 +40,45 @@ export default class SpacedEverythingPlugin extends Plugin {
       id: "review-next-note",
       name: "Review next note",
       callback: async () => {
-        this.data = await syncVault(this.app.vault, this.data, this.settings);
+        delete this.data.srsSession;
+        const notes = getNotesFromVault(this.app, this.settings).filter((n) => n.interval >= 0);
+        const dueCount = notes.filter((n) => noteIsDue(n)).length;
+        this.data.reviewLoadLog.push({ timestamp: today(), numNotes: notes.length, numDue: dueCount });
         await saveStore(this, this.data);
         this.updateStatusBar();
         await this.refreshDueNotesView();
         await this.refreshStatsView();
-        const notes = Object.values(this.data.notes).filter((n) => n.interval >= 0);
         const note = pickNoteToReview(notes, this.settings);
         if (!note) {
           new Notice("No notes due!");
           return;
         }
         new ReviewModal(this.app, this, note).open();
+      },
+    });
+
+    this.addCommand({
+      id: "continue-review",
+      name: "Continue review session",
+      callback: async () => {
+        const saved = this.data.srsSession;
+        if (!saved || saved.reviewedFilepaths.length === 0) {
+          new Notice("No saved session found. Use 'Review next note' to start one.");
+          return;
+        }
+        const allNotes = getNotesFromVault(this.app, this.settings).filter((n) => n.interval >= 0);
+        const remaining = allNotes.filter((n) => noteIsDue(n) && !saved.reviewedFilepaths.includes(n.filepath));
+        if (remaining.length === 0) {
+          new Notice("Session complete — no notes remaining.");
+          delete this.data.srsSession;
+          await saveStore(this, this.data);
+          return;
+        }
+        const note = pickNoteToReview(remaining, this.settings);
+        if (!note) return;
+        const modal = new ReviewModal(this.app, this, note);
+        modal.resumeSession(saved);
+        modal.open();
       },
     });
 
@@ -86,10 +98,8 @@ export default class SpacedEverythingPlugin extends Plugin {
 
     this.addCommand({
       id: "sync-vault",
-      name: "Sync vault with schedule",
+      name: "Refresh schedule views",
       callback: async () => {
-        this.data = await syncVault(this.app.vault, this.data, this.settings);
-        await saveStore(this, this.data);
         this.updateStatusBar();
         await this.refreshDueNotesView();
         await this.refreshStatsView();
@@ -107,10 +117,7 @@ export default class SpacedEverythingPlugin extends Plugin {
               .setTitle(isActive ? "Remove from active deck" : "Add to active deck")
               .setIcon(isActive ? "square" : "check-square")
               .onClick(async () => {
-                const newActive = !isActive;
-                await writeFrontmatterActive(this.app, file.path, newActive);
-                const record = Object.values(this.data.notes).find((n) => n.filepath === file.path);
-                if (record) this.data.notes[record.sha1sum].active = newActive;
+                await writeFrontmatterActive(this.app, file.path, !isActive);
               }),
           );
         }
@@ -144,29 +151,13 @@ export default class SpacedEverythingPlugin extends Plugin {
 
         for (const file of activeFiles) {
           await writeFrontmatterActive(this.app, file.path, false);
-          const record = Object.values(this.data.notes).find((n) => n.filepath === file.path);
-          if (record) this.data.notes[record.sha1sum].active = false;
         }
-        await saveStore(this, this.data);
         new Notice(`Cleared ${activeFiles.length} note${activeFiles.length !== 1 ? "s" : ""} from the active deck.`);
       },
     });
 
     this.registerView(STATS_VIEW_TYPE, (leaf) => new StatsView(leaf, this));
     this.addRibbonIcon("bar-chart", "Show stats", () => this.activateStatsView());
-
-    // Auto-sync on file modify
-    this.registerEvent(
-      this.app.vault.on("modify", async (file) => {
-        if (file instanceof TFile && file.extension === "md") {
-          this.data = await syncVault(this.app.vault, this.data, this.settings);
-          await saveStore(this, this.data);
-          this.updateStatusBar();
-          await this.refreshDueNotesView();
-          await this.refreshStatsView();
-        }
-      }),
-    );
   }
 
   async loadSettings() {
@@ -180,7 +171,7 @@ export default class SpacedEverythingPlugin extends Plugin {
   }
 
   updateStatusBar() {
-    const allNotes = Object.values(this.data.notes).filter((n) => n.interval >= 0);
+    const allNotes = getNotesFromVault(this.app, this.settings).filter((n) => n.interval >= 0);
     const dueCount = allNotes.filter((n) => noteIsDue(n)).length;
     this.statusBarItem.setText(`${dueCount} due`);
   }
@@ -222,7 +213,7 @@ export default class SpacedEverythingPlugin extends Plugin {
   }
 
   async resetData() {
-    this.data = { notes: {}, reviewLoadLog: [], reviewHistory: [] };
+    this.data = { reviewLoadLog: [], reviewHistory: [] };
     await saveStore(this, this.data);
     this.updateStatusBar();
     await this.refreshDueNotesView();
@@ -251,7 +242,7 @@ class FolderDeckPickerModal extends Modal {
     // Option: use folder name as deck
     const folderRow = contentEl.createDiv({ cls: "spaced-deck-item" });
     const folderCheck = folderRow.createEl("input", { type: "checkbox" });
-    folderRow.createSpan({ text: `Use folder name as deck ("${this.folder.name}")` });
+    folderRow.createSpan({ text: `Create deck: ${this.folder.name}...` });
     folderCheck.addEventListener("change", () => {
       this.useFolderName = folderCheck.checked;
     });
@@ -286,12 +277,14 @@ class FolderDeckPickerModal extends Modal {
       for (const f of folderFiles) {
         await writeFrontmatterActive(this.app, f.path, true);
         if (decksToAssign.length > 0) {
-          await writeFrontmatterDecks(this.app, f.path, decksToAssign);
-        }
-        const record = Object.values(this.plugin.data.notes).find((n) => n.filepath === f.path);
-        if (record) {
-          record.active = true;
-          if (decksToAssign.length > 0) record.decks = decksToAssign;
+          const existingFm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+          const existingDecks: string[] = Array.isArray(existingFm?.decks)
+            ? existingFm.decks
+            : existingFm?.decks
+              ? [existingFm.decks]
+              : [];
+          const mergedDecks = [...new Set([...existingDecks, ...decksToAssign])];
+          await writeFrontmatterDecks(this.app, f.path, mergedDecks);
         }
       }
 

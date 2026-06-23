@@ -1,9 +1,7 @@
-//← load/save plugin data (JSON)
-
 import { Plugin } from "obsidian";
-import { PluginData, NoteRecord } from "./types";
+import { PluginData } from "./types";
 
-const EMPTY_DATA: PluginData = { notes: {}, reviewLoadLog: [], reviewHistory: [] };
+const EMPTY_DATA: PluginData = { reviewLoadLog: [], reviewHistory: [] };
 
 export async function loadStore(plugin: Plugin): Promise<PluginData> {
   const saved = await plugin.loadData();
@@ -13,8 +11,4 @@ export async function loadStore(plugin: Plugin): Promise<PluginData> {
 export async function saveStore(plugin: Plugin, data: PluginData): Promise<void> {
   const current = (await plugin.loadData()) ?? {};
   await plugin.saveData({ ...current, pluginData: data });
-}
-
-export function getActiveNotes(data: PluginData): NoteRecord[] {
-  return Object.values(data.notes).filter((n) => n.interval >= 0);
 }

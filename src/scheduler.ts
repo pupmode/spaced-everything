@@ -1,5 +1,3 @@
-// Direct port of spaced_inbox.py scheduling logic
-
 import { NoteRecord, NoteState, SpacedEverythingSettings } from "./types";  
 
 const MAX_INTERVAL = 365; // days — prevents notes from disappearing for years  

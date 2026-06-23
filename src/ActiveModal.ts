@@ -3,9 +3,18 @@ import { NoteRecord } from "./types";
 import type SpacedEverythingPlugin from "./main";
 import { saveStore } from "./store";
 import { writeFrontmatterActive, writeFrontmatterDecks } from "./frontmatter";
+import { createTiptapEditor, extractMarkdown } from "./tiptap-editor";
+import type { Editor } from "@tiptap/core";
+import { readNoteRecord } from "./frontmatter";
+import { QuickNoteModal } from "./QuickNoteModal";
 
 export class ActiveModal extends Modal {
   private renderComponent: Component | null = null;
+  private tiptapEditor: Editor | null = null;
+  private renderedContainer: HTMLElement | null = null;
+  private tiptapContainer: HTMLElement | null = null;
+  private isEditing = false;
+  private pendingSaveTitle: (() => Promise<void>) | null = null;
 
   private remaining: NoteRecord[];
   private passed: NoteRecord[] = [];
@@ -53,6 +62,10 @@ export class ActiveModal extends Modal {
     this.note = this.remaining[0];
     const note = this.note;
 
+    if (this.tiptapEditor) {
+      this.tiptapEditor.destroy();
+      this.tiptapEditor = null;
+    }
     if (this.renderComponent) {
       this.renderComponent.unload();
     }
@@ -65,19 +78,52 @@ export class ActiveModal extends Modal {
     // Title (clickable to open note)
     const title = note.filepath.split("/").pop()!.replace(/\.md$/, "");
     const titleEl = headerRow.createEl("h1", { text: title, cls: "spaced-note-title" });
-    titleEl.style.cursor = "pointer";
-    titleEl.addEventListener("click", async () => {
-      const file = this.app.vault.getAbstractFileByPath(note.filepath) as TFile;
-      if (!file) return;
-      const leaf = this.app.workspace.getLeaf("tab");
-      await leaf.openFile(file);
-    });
+    titleEl.spellcheck = false;
+
+    if (this.isEditing) {
+      titleEl.contentEditable = "true";
+      this.pendingSaveTitle = async () => {
+        const newName = (titleEl.textContent ?? "").trim();
+        if (!newName || newName === title) return;
+        const f = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile;
+        if (!f) return;
+        const dir = this.note.filepath.includes("/")
+          ? this.note.filepath.substring(0, this.note.filepath.lastIndexOf("/"))
+          : "";
+        const newPath = dir ? `${dir}/${newName}.md` : `${newName}.md`;
+        await this.app.vault.rename(f, newPath);
+        this.note = { ...this.note, filepath: newPath };
+        this.pendingSaveTitle = null;
+      };
+      titleEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          titleEl.blur();
+        }
+        if (e.key === "Escape") {
+          titleEl.textContent = title;
+          titleEl.blur();
+        }
+      });
+      titleEl.addEventListener("blur", async () => {
+        await this.pendingSaveTitle?.();
+      });
+    } else {
+      titleEl.style.cursor = "pointer";
+      titleEl.addEventListener("click", async () => {
+        const file = this.app.vault.getAbstractFileByPath(note.filepath) as TFile;
+        if (!file) return;
+        const leaf = this.app.workspace.getLeaf(false);
+        await leaf.openFile(file);
+      });
+      this.pendingSaveTitle = null;
+    }
 
     // Right: controls
     const headerRight = headerRow.createDiv({ cls: "spaced-header-right" });
 
     // Restart session button
-    const restartBtn = headerRight.createDiv({ cls: "spaced-restart-btn" });
+    const restartBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
     setIcon(restartBtn, "rotate-ccw");
     restartBtn.setAttribute("aria-label", "Restart session");
     restartBtn.addEventListener("click", async () => {
@@ -91,6 +137,25 @@ export class ActiveModal extends Modal {
       this.progressLog = [];
       this.currentRoundSize = allNotes.length;
       await this.render();
+    });
+
+    // Edit button
+    const editBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
+    setIcon(editBtn, this.isEditing ? "eye" : "pencil");
+    editBtn.setAttribute("aria-label", this.isEditing ? "Switch to read view" : "Switch to edit view");
+    editBtn.addEventListener("click", async () => {
+      await this.pendingSaveTitle?.();
+      await this.saveBodyEdits();
+      this.isEditing = !this.isEditing;
+      await this.render();
+    });
+
+    // New note button
+    const newNoteBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
+    setIcon(newNoteBtn, "file-plus");
+    newNoteBtn.setAttribute("aria-label", "New note");
+    newNoteBtn.addEventListener("click", () => {
+      new QuickNoteModal(this.app).open();
     });
 
     // Deck picker button
@@ -112,7 +177,7 @@ export class ActiveModal extends Modal {
 
     // Active checkbox (no label, larger)
     const activeCheckbox = headerRight.createEl("input", { cls: "spaced-active-checkbox" });
-    activeCheckbox.type = "checkbox";
+    activeCheckbox.type = "checkbox";  
     const noteFileForActive = this.app.vault.getAbstractFileByPath(note.filepath) as TFile | null;
     activeCheckbox.checked = noteFileForActive
       ? this.app.metadataCache.getFileCache(noteFileForActive)?.frontmatter?.active === true
@@ -120,10 +185,7 @@ export class ActiveModal extends Modal {
     activeCheckbox.setAttribute("aria-label", "Add to active deck");
     activeCheckbox.addEventListener("change", async () => {
       const newActive = activeCheckbox.checked;
-      const record = this.plugin.data.notes[this.note.sha1sum];
-      if (record) record.active = newActive;
       this.note = { ...this.note, active: newActive };
-      await saveStore(this.plugin, this.plugin.data);
       await writeFrontmatterActive(this.app, this.note.filepath, newActive);
     });
 
@@ -138,9 +200,21 @@ export class ActiveModal extends Modal {
     if (!file) {
       contentEl.createEl("p", { text: `File not found: ${note.filepath}` });
     } else {
-      const content = await this.app.vault.read(file);
-      const renderEl = contentEl.createDiv({ cls: "spaced-note-content" });
-      await MarkdownRenderer.render(this.app, content, renderEl, note.filepath, this.renderComponent);
+      const raw = await this.app.vault.read(file);
+      let body = raw;
+      if (raw.startsWith("---")) {
+        const end = raw.indexOf("\n---", 3);
+        if (end !== -1) body = raw.slice(end + 4).trimStart();
+      }
+      this.renderedContainer = contentEl.createDiv({ cls: "spaced-note-content spaced-note-rendered" });
+      this.tiptapContainer = contentEl.createDiv({ cls: "spaced-note-content" });
+      if (this.isEditing) {
+        this.renderedContainer.style.display = "none";
+        this.tiptapEditor = createTiptapEditor(this.tiptapContainer, body);
+      } else {
+        this.tiptapContainer.style.display = "none";
+        await MarkdownRenderer.render(this.app, body, this.renderedContainer, note.filepath, this.renderComponent!);
+      }
     }
 
     // Pass / Fail buttons
@@ -171,7 +245,28 @@ export class ActiveModal extends Modal {
     }
   }
 
+  private async saveBodyEdits(): Promise<void> {
+    if (!this.tiptapEditor || !this.isEditing) return;
+    const markdown = extractMarkdown(this.tiptapEditor);
+    const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+    if (!file) return;
+    const existing = await this.app.vault.read(file);
+    let frontmatter = "";
+    let body = existing;
+    if (existing.startsWith("---")) {
+      const end = existing.indexOf("\n---", 3);
+      if (end !== -1) {
+        frontmatter = existing.slice(0, end + 4);
+        body = existing.slice(end + 4).trimStart();
+      }
+    }
+    if (markdown.trim() === body.trim()) return;
+    await this.app.vault.modify(file, frontmatter ? `${frontmatter}\n${markdown}` : markdown);
+  }
+
   private async respond(result: "pass" | "fail") {
+    await this.pendingSaveTitle?.();
+    await this.saveBodyEdits();
     const note = this.remaining.shift()!;
     this.progressLog.push(result);
 
@@ -295,7 +390,7 @@ export class ActiveModal extends Modal {
     return Array.from(deckSet).sort();
   }
 
-  private createDeckDropdown(anchor: HTMLElement): HTMLElement {
+  private createDeckDropdown(anchor: HTMLElement): { dropdown: HTMLElement; outsideHandler: (e: MouseEvent) => void } {
     const allDecks = this.getAllDeckNames();
 
     const noteFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
@@ -327,8 +422,6 @@ export class ActiveModal extends Modal {
       // Auto-activate the note when a deck is assigned
       if (!this.note.active) {
         this.note = { ...this.note, active: true };
-        const record = this.plugin.data.notes[this.note.sha1sum];
-        if (record) record.active = true;
         await writeFrontmatterActive(this.app, this.note.filepath, true);
         const activeCheckbox = this.contentEl.querySelector<HTMLInputElement>(".spaced-active-checkbox");
         if (activeCheckbox) activeCheckbox.checked = true;
@@ -347,8 +440,7 @@ export class ActiveModal extends Modal {
         cb.type = "checkbox";
         cb.checked = currentDecks.includes(deck);
         item.createSpan({ text: deck });
-        item.addEventListener("mousedown", async (e) => {
-          e.preventDefault();
+        item.addEventListener("click", async (e) => {
           e.stopPropagation();
           const idx = currentDecks.indexOf(deck);
           if (idx >= 0) {
@@ -360,8 +452,6 @@ export class ActiveModal extends Modal {
             // Auto-activate the note when assigned to a deck
             if (!this.note.active) {
               this.note = { ...this.note, active: true };
-              const record = this.plugin.data.notes[this.note.sha1sum];
-              if (record) record.active = true;
               await writeFrontmatterActive(this.app, this.note.filepath, true);
               const activeCheckbox = this.contentEl.querySelector<HTMLInputElement>(".spaced-active-checkbox");
               if (activeCheckbox) activeCheckbox.checked = true;
@@ -419,12 +509,28 @@ export class ActiveModal extends Modal {
       }
     };
     setTimeout(() => document.addEventListener("mousedown", outsideHandler), 0);
-
     searchInput.focus();
-    return dropdown;
+    return { dropdown, outsideHandler };
+  }
+
+  close() {
+    if (this.isEditing) {
+      void Promise.all([this.pendingSaveTitle?.(), this.saveBodyEdits()]).then(() => {
+        this.isEditing = false;
+        super.close();
+      });
+      return;
+    }
+    super.close();
   }
 
   onClose() {
+    void this.pendingSaveTitle?.();
+    void this.saveBodyEdits();
+    if (this.tiptapEditor) {
+      this.tiptapEditor.destroy();
+      this.tiptapEditor = null;
+    }
     if (this.renderComponent) {
       this.renderComponent.unload();
       this.renderComponent = null;
@@ -434,5 +540,88 @@ export class ActiveModal extends Modal {
     if (this.remaining.length > 0 || this.passed.length > 0 || this.failed.length > 0) {
       this.saveSession(); // fire-and-forget is fine here
     }
+  }
+}
+
+export class DeckPickerModal extends Modal {
+  constructor(
+    app: App,
+    private plugin: SpacedEverythingPlugin,
+  ) {
+    super(app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Choose a deck" });
+
+    // Collect deck → notes mapping from metadataCache
+    const deckMap = new Map<string, NoteRecord[]>();
+
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      if (!fm?.active) continue;
+
+      const decks: string[] = Array.isArray(fm.decks) && fm.decks.length > 0 ? fm.decks : ["default"];
+      const record: NoteRecord = readNoteRecord(
+        this.app,
+        file,
+        this.plugin.settings.defaultEaseFactor,
+        this.plugin.settings.initialInterval,
+      );
+
+      for (const deck of decks) {
+        if (!deckMap.has(deck)) deckMap.set(deck, []);
+        deckMap.get(deck)!.push(record);
+      }
+    }
+
+    if (deckMap.size === 0) {
+      contentEl.createEl("p", { text: "No active notes found." });
+      return;
+    }
+
+    // Sort: most recently used first; "default" always listed
+    const lastUsed = this.plugin.data.deckLastUsed ?? {};
+    const sorted = [...deckMap.keys()].sort((a, b) => {
+      const ta = lastUsed[a] ?? "";
+      const tb = lastUsed[b] ?? "";
+      return tb.localeCompare(ta); // descending
+    });
+
+    for (const deckName of sorted) {
+      const notes = deckMap.get(deckName)!;
+      const btn = contentEl.createEl("button", {
+        text: `${deckName === "default" ? "Default deck" : deckName} (${notes.length})`,
+        cls: "mod-cta",
+      });
+      btn.style.display = "block";
+      btn.style.marginBottom = "8px";
+      btn.addEventListener("click", () => {
+        // Record last used
+        this.plugin.data.deckLastUsed = { ...lastUsed, [deckName]: new Date().toISOString() };
+        this.close();
+        const modal = new ActiveModal(this.app, this.plugin, notes, deckName);
+        // Resume saved session if available
+        const saved = this.plugin.data.cramSessions?.[deckName];
+        if (saved) {
+          const allNotes = [...notes]; // full deck for filepath lookup
+          const toRecord = (fp: string) => allNotes.find((n) => n.filepath === fp) ?? notes[0];
+          modal.resumeSession({
+            remaining: saved.remaining.map(toRecord),
+            passed: saved.passed.map(toRecord),
+            failed: saved.failed.map(toRecord),
+            progressLog: saved.progressLog,
+            currentRoundSize: saved.currentRoundSize,
+          });
+        }
+        modal.open();
+      });
+    }
+  }
+
+  onClose() {
+    this.contentEl.empty();
   }
 }
