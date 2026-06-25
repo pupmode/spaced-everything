@@ -128,9 +128,8 @@ export class ActiveModal extends Modal {
     setIcon(newNoteBtn, "file-plus");
     newNoteBtn.setAttribute("aria-label", "New note");
     newNoteBtn.addEventListener("click", () => {
-      new QuickNoteModal(this.app).open();
+      new QuickNoteModal(this.app, this.plugin, this.deckName).open();
     });
-
     // Deck picker button
     const deckWrapper = headerRight.createDiv({ cls: "spaced-deck-wrapper" });
     const deckBtn = deckWrapper.createDiv({ cls: "spaced-deck-btn" });
@@ -435,7 +434,7 @@ export class ActiveModal extends Modal {
     const newPath = dir ? `${dir}/${newName}.md` : `${newName}.md`;
     await this.app.vault.rename(f, newPath);
     this.note = { ...this.note, filepath: newPath };
-    this.originalTitle = newName;  
+    this.originalTitle = newName;
   }
 
   private getActiveNotes(notes: NoteRecord[]): NoteRecord[] {
@@ -537,12 +536,12 @@ export class DeckPickerModal extends Modal {
 
     for (const deckName of sorted) {
       const notes = deckMap.get(deckName)!;
-      const btn = contentEl.createEl("button", {
+      const row = contentEl.createDiv({ cls: "spaced-deck-row" });
+
+      const btn = row.createEl("button", {
         text: `${deckName === "default" ? "Default deck" : deckName} (${notes.length})`,
-        cls: "mod-cta",
+        cls: "mod-cta spaced-deck-pick-btn",
       });
-      btn.style.display = "block";
-      btn.style.marginBottom = "8px";
       btn.addEventListener("click", () => {
         // Record last used
         this.plugin.data.deckLastUsed = { ...lastUsed, [deckName]: new Date().toISOString() };
@@ -572,7 +571,98 @@ export class DeckPickerModal extends Modal {
         }
         modal.open();
       });
+
+      if (deckName !== "default") {
+        const renameBtn = row.createDiv({ cls: "spaced-hdr-btn" });
+        setIcon(renameBtn, "pencil");
+        renameBtn.setAttribute("aria-label", "Rename deck");
+        renameBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+
+          // Swap button for an input
+          const input = document.createElement("input");
+          input.className = "spaced-deck-rename-input";
+          input.value = deckName;
+          btn.replaceWith(input);
+          renameBtn.remove();
+          input.focus();
+          input.select();
+
+          const cancel = () => {
+            input.replaceWith(btn);
+            row.appendChild(renameBtn);
+          };
+
+          const confirm = async () => {
+            if (submitted) return;
+            submitted = true;
+            const newName = input.value.trim();
+            if (!newName || newName === deckName) {
+              cancel();
+              return;
+            }
+            await this.renameDeck(deckName, newName);
+          };
+
+          input.addEventListener("keydown", async (e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              await confirm();
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              cancel();
+            }
+          });
+
+          input.addEventListener("blur", () => {
+            void confirm();
+          });
+        });
+      }
     }
+  }
+
+  private async renameDeck(oldName: string, newName: string): Promise<void> {
+    // 1. Update frontmatter first (before folder rename changes file paths)
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const decks = this.app.metadataCache.getFileCache(file)?.frontmatter?.decks;
+      if (!Array.isArray(decks) || !decks.includes(oldName)) continue;
+      await writeFrontmatterDecks(
+        this.app,
+        file.path,
+        decks.map((d: string) => (d === oldName ? newName : d)),
+      );
+    }
+
+    // 2. Optionally rename matching folder
+    if (this.plugin.settings.renameFolderWithDeck) {
+      const matchingFolders = this.app.vault.getAllFolders().filter((f) => f.name === oldName);
+      if (matchingFolders.length === 1) {
+        const folder = matchingFolders[0];
+        const parentPath = folder.parent?.path;
+        const newFolderPath = parentPath && parentPath !== "/" ? `${parentPath}/${newName}` : newName;
+        await this.app.vault.rename(folder, newFolderPath);
+      } else if (matchingFolders.length > 1) {
+        new Notice(`Deck renamed, but folder was not renamed: multiple folders named "${oldName}" exist.`);
+      }
+    }
+
+    // 3. Migrate plugin data keys
+    const lastUsed = this.plugin.data.deckLastUsed;
+    if (lastUsed?.[oldName] !== undefined) {
+      lastUsed[newName] = lastUsed[oldName];
+      delete lastUsed[oldName];
+    }
+
+    const sessions = this.plugin.data.cramSessions;
+    if (sessions?.[oldName] !== undefined) {
+      sessions[newName] = sessions[oldName];
+      delete sessions[oldName];
+    }
+
+    await saveStore(this.plugin, this.plugin.data);
+    this.onOpen();
   }
 
   onClose() {

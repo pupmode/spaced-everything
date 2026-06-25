@@ -131,6 +131,16 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
       );
 
       new Setting(containerEl)
+        .setName("Rename folder when renaming deck")
+        .setDesc("If a deck has a matching folder, rename the folder too.")
+        .addToggle((t) =>
+          t.setValue(this.plugin.settings.renameFolderWithDeck).onChange(async (v) => {
+            this.plugin.settings.renameFolderWithDeck = v;
+            await this.plugin.saveSettings();
+          }),
+        );
+
+      new Setting(containerEl)
         .setName("Recent-note priority threshold")
         .setDesc("Probability (0–1) of trying to show a recently-created unreviewed note first. Default: 0.5")
         .addText((text) =>

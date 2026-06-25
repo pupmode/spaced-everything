@@ -290,6 +290,22 @@ button.mod-purple { background-color: var(--color-purple); color: var(--text-on-
   
 /* ── Deck Picker ────────────────────────────────────────────────────────── */  
   
+.spaced-deck-row {  
+  display: flex;  
+  align-items: center;  
+  gap: 6px;  
+  margin-bottom: 8px;  
+}  
+  
+.spaced-deck-pick-btn {  
+  flex: 1;  
+}  
+  
+.spaced-deck-rename-input {  
+  flex: 1;  
+  font-size: inherit;  
+}
+
 .spaced-deck-wrapper {  
   position: relative;  
 }  

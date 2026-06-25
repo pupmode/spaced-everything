@@ -14,7 +14,8 @@ export class ReviewModal extends Modal {
   private renderComponent: Component | null = null;
   private renderedContainer: HTMLElement | null = null;
   private tiptapContainer: HTMLElement | null = null;
-  private pendingSaveTitle: (() => Promise<void>) | null = null;
+  private titleEl: HTMLElement | null = null;
+  private originalTitle = "";
   private isEditing = false;
   private sessionSize = 0;
   private progressLog: string[] = [];
@@ -41,47 +42,29 @@ export class ReviewModal extends Modal {
 
     const title = this.note.filepath.split("/").pop()!.replace(/\.md$/, "");
     const headerRow = contentEl.createDiv({ cls: "spaced-header-row" });
-    const titleEl = headerRow.createEl("h1", { text: title, cls: "spaced-note-title" });
-    titleEl.spellcheck = false;
-
-    const saveTitle = async () => {
-      if (!this.isEditing) return;
-      const newName = (titleEl.textContent ?? "").trim();
-      if (!newName || newName === title) return;
-      const f = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile;
-      if (!f) return;
-      const dir = this.note.filepath.includes("/")
-        ? this.note.filepath.substring(0, this.note.filepath.lastIndexOf("/"))
-        : "";
-      const newPath = dir ? `${dir}/${newName}.md` : `${newName}.md`;
-      await this.app.vault.rename(f, newPath);
-      this.note = { ...this.note, filepath: newPath };
-    };
-    this.pendingSaveTitle = saveTitle;
+    this.titleEl = headerRow.createEl("h1", { text: title, cls: "spaced-note-title" });
+    this.originalTitle = title;
+    this.titleEl.spellcheck = false;
+    this.titleEl.addEventListener("blur", () => this.saveTitle());
 
     // Non-edit mode: click opens the note
-    titleEl.addEventListener("click", () => {
+    this.titleEl!.addEventListener("click", () => {
       if (this.isEditing) return;
       const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
       if (file) this.app.workspace.getLeaf(false).openFile(file);
     });
 
     // Edit mode: Enter confirms, Escape cancels
-    titleEl.addEventListener("keydown", (e) => {
+    this.titleEl!.addEventListener("keydown", (e) => {
       if (!this.isEditing) return;
       if (e.key === "Enter") {
         e.preventDefault();
-        titleEl.blur();
+        this.titleEl!.blur();
       }
       if (e.key === "Escape") {
-        titleEl.textContent = title;
-        titleEl.blur();
+        this.titleEl!.textContent = title;
+        this.titleEl!.blur();
       }
-    });
-
-    // Save on blur when in edit mode (e.g. user clicks away)
-    titleEl.addEventListener("blur", async () => {
-      if (this.isEditing) await saveTitle();
     });
 
     const allNotes = getNotesFromVault(this.app, this.plugin.settings).filter((n) => n.interval >= 0);
@@ -101,27 +84,21 @@ export class ReviewModal extends Modal {
     editBtn.setAttribute("aria-label", "Switch to edit view");
     editBtn.addEventListener("click", async () => {
       if (this.isEditing) {
-        await this.pendingSaveTitle?.();
+        await this.saveTitle();
         await this.saveBodyEdits();
         this.isEditing = false;
-        titleEl.contentEditable = "false";
+        this.titleEl!.contentEditable = "false";
         if (this.tiptapContainer) this.tiptapContainer.style.display = "none";
         if (this.renderedContainer) {
           this.renderedContainer.style.display = "";
           // Re-render with the saved content
           this.renderedContainer.empty();
-          if (this.renderComponent) {
-            this.renderComponent.unload();
-            this.renderComponent = null;
-          }
+          this.renderComponent?.unload();
+          this.renderComponent = null;
           const updatedFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
           if (updatedFile) {
             const updatedRaw = await this.app.vault.read(updatedFile);
-            let updatedBody = updatedRaw;
-            if (updatedRaw.startsWith("---")) {
-              const end = updatedRaw.indexOf("\n---", 3);
-              if (end !== -1) updatedBody = updatedRaw.slice(end + 4).trimStart();
-            }
+            const { body: updatedBody } = this.stripFrontmatter(updatedRaw);
             this.renderComponent = new Component();
             this.renderComponent.load();
             await MarkdownRenderer.render(
@@ -137,8 +114,8 @@ export class ReviewModal extends Modal {
         editBtn.setAttribute("aria-label", "Switch to edit view");
       } else {
         this.isEditing = true;
-        titleEl.contentEditable = "true";
-        titleEl.focus();
+        this.titleEl!.contentEditable = "true";
+        this.titleEl!.focus();
         if (this.renderedContainer) this.renderedContainer.style.display = "none";
         if (this.tiptapContainer) this.tiptapContainer.style.display = "";
         this.tiptapEditor?.commands.focus();
@@ -152,7 +129,7 @@ export class ReviewModal extends Modal {
     setIcon(newNoteBtn, "file-plus");
     newNoteBtn.setAttribute("aria-label", "New note");
     newNoteBtn.addEventListener("click", () => {
-      new QuickNoteModal(this.app).open();
+      new QuickNoteModal(this.app, this.plugin).open();
     });
 
     // Deck picker button
@@ -200,17 +177,9 @@ export class ReviewModal extends Modal {
       return;
     }
     const raw = await this.app.vault.read(file);
-    let body = raw;
-    if (raw.startsWith("---")) {
-      const end = raw.indexOf("\n---", 3);
-      if (end !== -1) body = raw.slice(end + 4).trimStart();
-    }
+    const { body } = this.stripFrontmatter(raw);
     // Read-only rendered view (default)
     this.renderedContainer = contentEl.createDiv({ cls: "spaced-note-content" });
-    if (this.renderComponent) {
-      this.renderComponent.unload();
-      this.renderComponent = null;
-    }
     this.renderComponent = new Component();
     this.renderComponent.load();
     await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
@@ -266,19 +235,42 @@ export class ReviewModal extends Modal {
     return btn;
   }
 
+  private stripFrontmatter(raw: string): { frontmatter: string; body: string } {
+    if (raw.startsWith("---")) {
+      const end = raw.indexOf("\n---", 3);
+      if (end !== -1) return { frontmatter: raw.slice(0, end + 4), body: raw.slice(end + 4).trimStart() };
+    }
+    return { frontmatter: "", body: raw };
+  }
+
   private async saveBodyEdits() {
     if (!this.isEditing || !this.tiptapEditor) return;
     const newBody = extractMarkdown(this.tiptapEditor);
     const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
     if (!file) return;
     const raw = await this.app.vault.read(file);
-    const fmMatch = raw.match(/^---[\s\S]*?---\n/);
-    const frontmatter = fmMatch ? fmMatch[0] : "";
-    await this.app.vault.modify(file, frontmatter + newBody);
+    const { frontmatter, body } = this.stripFrontmatter(raw);
+    if (newBody.trim() === body.trim()) return;
+    await this.app.vault.modify(file, frontmatter ? `${frontmatter}\n${newBody}` : newBody);
+  }
+
+  private async saveTitle(): Promise<void> {
+    if (!this.isEditing || !this.titleEl) return;
+    const newName = (this.titleEl.textContent ?? "").trim();
+    if (!newName || newName === this.originalTitle) return;
+    const f = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile;
+    if (!f) return;
+    const dir = this.note.filepath.includes("/")
+      ? this.note.filepath.substring(0, this.note.filepath.lastIndexOf("/"))
+      : "";
+    const newPath = dir ? `${dir}/${newName}.md` : `${newName}.md`;
+    await this.app.vault.rename(f, newPath);
+    this.note = { ...this.note, filepath: newPath };
+    this.originalTitle = newName;
   }
 
   private async react(reaction: NoteState | "skip") {
-    await this.pendingSaveTitle?.();
+    await this.saveTitle();
     await this.saveBodyEdits();
     this.progressLog.push(this.reactionColor(reaction));
     if (reaction === "skip") {
@@ -315,7 +307,7 @@ export class ReviewModal extends Modal {
   }
 
   private async archiveNote() {
-    await this.pendingSaveTitle?.();
+    await this.saveTitle();
     await this.saveBodyEdits();
     this.progressLog.push(this.reactionColor("archive"));
     await writeNoteRecord(this.app, this.note.filepath, { interval: -1 });
@@ -339,7 +331,7 @@ export class ReviewModal extends Modal {
   }
 
   private async deleteNote() {
-    await this.pendingSaveTitle?.();
+    await this.saveTitle();
     this.progressLog.push(this.reactionColor("delete"));
     const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile;
     if (file) {
@@ -385,6 +377,22 @@ export class ReviewModal extends Modal {
     }
   }
 
+  private async autoActivateNote(): Promise<void> {
+    if (this.note.active) return;
+    this.note = { ...this.note, active: true };
+    await writeFrontmatterActive(this.app, this.note.filepath, true);
+    const cb = this.contentEl.querySelector<HTMLInputElement>(".spaced-active-checkbox");
+    if (cb) cb.checked = true;
+  }
+
+  private cleanupEditors() {
+    this.tiptapEditor?.destroy();
+    this.tiptapEditor = null;
+    this.renderComponent?.unload();
+    this.renderComponent = null;
+  }
+
+
   private createDeckDropdown(anchor: HTMLElement): { dropdown: HTMLElement; outsideHandler: (e: MouseEvent) => void } {
     const allDecks = this.getAllDeckNames();
 
@@ -415,12 +423,7 @@ export class ReviewModal extends Modal {
       allDecks.sort();
       await writeFrontmatterDecks(this.app, this.note.filepath, currentDecks);
       // Auto-activate the note when a deck is assigned
-      if (!this.note.active) {
-        this.note = { ...this.note, active: true };
-        await writeFrontmatterActive(this.app, this.note.filepath, true);
-        const activeCheckbox = this.contentEl.querySelector<HTMLInputElement>(".spaced-active-checkbox");
-        if (activeCheckbox) activeCheckbox.checked = true;
-      }
+      await this.autoActivateNote();
       searchInput.value = "";
       renderList("");
     };
@@ -444,16 +447,11 @@ export class ReviewModal extends Modal {
           } else {
             currentDecks.push(deck);
             cb.checked = true;
-           // Auto-activate the note when assigned to a deck
-           if (!this.note.active) {
-             this.note = { ...this.note, active: true };
-             await writeFrontmatterActive(this.app, this.note.filepath, true);
-             const activeCheckbox = this.contentEl.querySelector<HTMLInputElement>(".spaced-active-checkbox");
-             if (activeCheckbox) activeCheckbox.checked = true;
-           }
-         }
-         await writeFrontmatterDecks(this.app, this.note.filepath, currentDecks);
-       });
+            // Auto-activate the note when assigned to a deck
+            await this.autoActivateNote();
+          }
+          await writeFrontmatterDecks(this.app, this.note.filepath, currentDecks);
+        });
       }
 
       // Always show "Add deck" at the bottom when the user has typed something
@@ -530,19 +528,9 @@ export class ReviewModal extends Modal {
     this.sessionSize = session.sessionSize;
   }
 
-  close() {
-    if (this.isEditing) {
-      void Promise.all([this.pendingSaveTitle?.(), this.saveBodyEdits()]).then(() => {
-        this.isEditing = false;
-        super.close();
-      });
-      return;
-    }
-    super.close();
-  }
-
   onClose() {
-
+    void this.saveTitle();
+    void this.saveBodyEdits();
     if (this.sessionSize > 0) {
       if (this.reviewedInSession.size < this.sessionSize) {
         this.plugin.data.srsSession = {
@@ -555,14 +543,7 @@ export class ReviewModal extends Modal {
       }
       void saveStore(this.plugin, this.plugin.data);
     }
-    if (this.tiptapEditor) {
-      this.tiptapEditor.destroy();
-      this.tiptapEditor = null;
-    }
-    if (this.renderComponent) {
-      this.renderComponent.unload();
-      this.renderComponent = null;
-    }
+    this.cleanupEditors();
     this.contentEl.empty();
   }
 }

@@ -14,7 +14,6 @@ export interface NoteRecord {
 
 export interface CramSession {
   remaining: string[]; // filepaths
-  passed: string[]; // filepaths
   failed: string[]; // filepaths
   progressLog: ("pass" | "fail")[];
   currentRoundSize: number;
@@ -58,12 +57,13 @@ export interface PluginData {
 
 export interface SpacedEverythingSettings {
   sourceScope: "vault" | "folder";
-  sourceFolders: SourceFolder[]; 
+  sourceFolders: SourceFolder[];
   evergreenFolder: string;
   initialInterval: number;
   defaultEaseFactor: number;
-  recentUndueThreshold: number; 
-  excitingThreshold: number; 
+  renameFolderWithDeck: boolean;
+  recentUndueThreshold: number;
+  excitingThreshold: number;
 }  
 
 export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
@@ -72,6 +72,7 @@ export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
   evergreenFolder: "Evergreen",
   initialInterval: 1,
   defaultEaseFactor: 300,
+  renameFolderWithDeck: true,
   recentUndueThreshold: 0.5,
-  excitingThreshold: 0.7
+  excitingThreshold: 0.7,
 };
