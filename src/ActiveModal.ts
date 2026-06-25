@@ -14,7 +14,6 @@ export class ActiveModal extends Modal {
   private renderedContainer: HTMLElement | null = null;
   private tiptapContainer: HTMLElement | null = null;
   private isEditing = false;
-  private pendingSaveTitle: (() => Promise<void>) | null = null;
 
   private remaining: NoteRecord[];
   private passed: NoteRecord[] = [];
@@ -22,6 +21,10 @@ export class ActiveModal extends Modal {
   private progressLog: ("pass" | "fail")[] = [];
   private currentRoundSize: number;
   private note!: NoteRecord;
+  private titleEl: HTMLElement | null = null;
+  private originalTitle = "";
+
+  private allNotes: NoteRecord[] = [];
 
   constructor(
     app: App,
@@ -30,19 +33,18 @@ export class ActiveModal extends Modal {
     private deckName: string = "default",
   ) {
     super(app);
+    this.allNotes = [...notes];
     this.remaining = [...notes];
     this.currentRoundSize = notes.length;
   }
 
   public resumeSession(state: {
     remaining: NoteRecord[];
-    passed: NoteRecord[];
     failed: NoteRecord[];
     progressLog: ("pass" | "fail")[];
     currentRoundSize: number;
   }) {
     this.remaining = state.remaining;
-    this.passed = state.passed;
     this.failed = state.failed;
     this.progressLog = state.progressLog;
     this.currentRoundSize = state.currentRoundSize;
@@ -50,25 +52,23 @@ export class ActiveModal extends Modal {
 
   async onOpen() {
     if (this.remaining.length === 0 && this.failed.length > 0) {
-      this.showRoundSummary();
+      this.showSummary(false);
       return;
     }
     await this.render();
   }
 
   private async render() {
+    if (this.remaining.length === 0) {
+      this.showSummary(this.failed.length === 0);
+      return;
+    }
     const { contentEl } = this;
     contentEl.empty();
     this.note = this.remaining[0];
     const note = this.note;
 
-    if (this.tiptapEditor) {
-      this.tiptapEditor.destroy();
-      this.tiptapEditor = null;
-    }
-    if (this.renderComponent) {
-      this.renderComponent.unload();
-    }
+    this.cleanupEditors();
     this.renderComponent = new Component();
     this.renderComponent.load();
 
@@ -77,46 +77,30 @@ export class ActiveModal extends Modal {
 
     // Title (clickable to open note)
     const title = note.filepath.split("/").pop()!.replace(/\.md$/, "");
-    const titleEl = headerRow.createEl("h1", { text: title, cls: "spaced-note-title" });
-    titleEl.spellcheck = false;
+    this.titleEl = headerRow.createEl("h1", { text: title, cls: "spaced-note-title" });
+    this.originalTitle = title;
+    this.titleEl.spellcheck = false;
 
     if (this.isEditing) {
-      titleEl.contentEditable = "true";
-      this.pendingSaveTitle = async () => {
-        const newName = (titleEl.textContent ?? "").trim();
-        if (!newName || newName === title) return;
-        const f = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile;
-        if (!f) return;
-        const dir = this.note.filepath.includes("/")
-          ? this.note.filepath.substring(0, this.note.filepath.lastIndexOf("/"))
-          : "";
-        const newPath = dir ? `${dir}/${newName}.md` : `${newName}.md`;
-        await this.app.vault.rename(f, newPath);
-        this.note = { ...this.note, filepath: newPath };
-        this.pendingSaveTitle = null;
-      };
-      titleEl.addEventListener("keydown", (e) => {
+      this.titleEl.contentEditable = "true";
+      this.titleEl.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          titleEl.blur();
+          this.titleEl!.blur();
         }
         if (e.key === "Escape") {
-          titleEl.textContent = title;
-          titleEl.blur();
+          this.titleEl!.textContent = this.originalTitle;
+          this.titleEl!.blur();
         }
       });
-      titleEl.addEventListener("blur", async () => {
-        await this.pendingSaveTitle?.();
-      });
+      this.titleEl.addEventListener("blur", () => this.saveTitle());
     } else {
-      titleEl.style.cursor = "pointer";
-      titleEl.addEventListener("click", async () => {
+      this.titleEl.style.cursor = "pointer";
+      this.titleEl.addEventListener("click", async () => {
         const file = this.app.vault.getAbstractFileByPath(note.filepath) as TFile;
         if (!file) return;
-        const leaf = this.app.workspace.getLeaf(false);
-        await leaf.openFile(file);
+        await this.app.workspace.getLeaf(false).openFile(file);
       });
-      this.pendingSaveTitle = null;
     }
 
     // Right: controls
@@ -126,25 +110,14 @@ export class ActiveModal extends Modal {
     const restartBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
     setIcon(restartBtn, "rotate-ccw");
     restartBtn.setAttribute("aria-label", "Restart session");
-    restartBtn.addEventListener("click", async () => {
-      const allNotes = [...this.remaining, ...this.passed, ...this.failed].filter((n) => {
-        const f = this.app.vault.getAbstractFileByPath(n.filepath) as TFile | null;
-        return f ? this.app.metadataCache.getFileCache(f)?.frontmatter?.active === true : false;
-      });
-      this.remaining = allNotes;
-      this.passed = [];
-      this.failed = [];
-      this.progressLog = [];
-      this.currentRoundSize = allNotes.length;
-      await this.render();
-    });
+    restartBtn.addEventListener("click", () => this.restartSession(this.allNotes));
 
     // Edit button
     const editBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
     setIcon(editBtn, this.isEditing ? "eye" : "pencil");
     editBtn.setAttribute("aria-label", this.isEditing ? "Switch to read view" : "Switch to edit view");
     editBtn.addEventListener("click", async () => {
-      await this.pendingSaveTitle?.();
+      await this.saveTitle();
       await this.saveBodyEdits();
       this.isEditing = !this.isEditing;
       await this.render();
@@ -177,7 +150,7 @@ export class ActiveModal extends Modal {
 
     // Active checkbox (no label, larger)
     const activeCheckbox = headerRight.createEl("input", { cls: "spaced-active-checkbox" });
-    activeCheckbox.type = "checkbox";  
+    activeCheckbox.type = "checkbox";
     const noteFileForActive = this.app.vault.getAbstractFileByPath(note.filepath) as TFile | null;
     activeCheckbox.checked = noteFileForActive
       ? this.app.metadataCache.getFileCache(noteFileForActive)?.frontmatter?.active === true
@@ -201,11 +174,7 @@ export class ActiveModal extends Modal {
       contentEl.createEl("p", { text: `File not found: ${note.filepath}` });
     } else {
       const raw = await this.app.vault.read(file);
-      let body = raw;
-      if (raw.startsWith("---")) {
-        const end = raw.indexOf("\n---", 3);
-        if (end !== -1) body = raw.slice(end + 4).trimStart();
-      }
+      const { body } = this.stripFrontmatter(raw);
       this.renderedContainer = contentEl.createDiv({ cls: "spaced-note-content spaced-note-rendered" });
       this.tiptapContainer = contentEl.createDiv({ cls: "spaced-note-content" });
       if (this.isEditing) {
@@ -251,21 +220,13 @@ export class ActiveModal extends Modal {
     const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
     if (!file) return;
     const existing = await this.app.vault.read(file);
-    let frontmatter = "";
-    let body = existing;
-    if (existing.startsWith("---")) {
-      const end = existing.indexOf("\n---", 3);
-      if (end !== -1) {
-        frontmatter = existing.slice(0, end + 4);
-        body = existing.slice(end + 4).trimStart();
-      }
-    }
+    const { frontmatter, body } = this.stripFrontmatter(existing);
     if (markdown.trim() === body.trim()) return;
     await this.app.vault.modify(file, frontmatter ? `${frontmatter}\n${markdown}` : markdown);
   }
 
   private async respond(result: "pass" | "fail") {
-    await this.pendingSaveTitle?.();
+    await this.saveTitle();
     await this.saveBodyEdits();
     const note = this.remaining.shift()!;
     this.progressLog.push(result);
@@ -278,43 +239,34 @@ export class ActiveModal extends Modal {
 
     if (this.remaining.length === 0) {
       if (this.failed.length === 0) {
-        await this.showDone();
+        this.showSummary(true);
       } else {
-        this.showRoundSummary();
+        this.showSummary(false);
       }
       return;
     }
     await this.render();
   }
 
-  private showRoundSummary() {
-    if (this.renderComponent) {
-      this.renderComponent.unload();
-      this.renderComponent = null;
-    }
+  private showSummary(isDone: boolean) {
+    this.cleanupEditors();
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl("h3", { text: "Round complete!" });
-    contentEl.createEl("p", { text: `Notes passed: ${this.passed.length}` });
-    contentEl.createEl("p", { text: `Notes failed: ${this.failed.length}` });
-
+    if (isDone) {
+      void this.clearSession();
+      contentEl.createEl("h3", { text: "All done!" });
+    } else {
+      contentEl.createEl("h3", { text: "Round complete!" });
+      contentEl.createEl("p", { text: `Passed: ${this.passed.length}` });
+      contentEl.createEl("p", { text: `Failed: ${this.failed.length}` });
+    }
     const btnRow = contentEl.createDiv({ cls: "spaced-btn-row" });
-
-    const nextBtn = btnRow.createEl("button", { text: "Next round", cls: "mod-cta" });
-    nextBtn.addEventListener("click", async () => {
-      this.remaining = this.failed.filter((n) => {
-        const f = this.app.vault.getAbstractFileByPath(n.filepath) as TFile | null;
-        return f ? this.app.metadataCache.getFileCache(f)?.frontmatter?.active === true : false;
-      });
-      this.passed = [];
-      this.failed = [];
-      this.progressLog = [];
-      this.currentRoundSize = this.remaining.length;
-      await this.render();
+    const actionBtn = btnRow.createEl("button", {
+      text: isDone ? "Restart session" : "Next round",
+      cls: "mod-cta",
     });
-
-    const closeBtn = btnRow.createEl("button", { text: "Close" });
-    closeBtn.addEventListener("click", () => this.close());
+    actionBtn.addEventListener("click", () => this.restartSession(isDone ? this.allNotes : this.failed));
+    btnRow.createEl("button", { text: "Close" }).addEventListener("click", () => this.close());
   }
 
   private async clearSession() {
@@ -328,41 +280,11 @@ export class ActiveModal extends Modal {
     this.plugin.data.cramSessions = this.plugin.data.cramSessions ?? {};
     this.plugin.data.cramSessions[this.deckName] = {
       remaining: this.remaining.map((n) => n.filepath),
-      passed: this.passed.map((n) => n.filepath),
       failed: this.failed.map((n) => n.filepath),
       progressLog: [...this.progressLog],
       currentRoundSize: this.currentRoundSize,
     };
     await saveStore(this.plugin, this.plugin.data);
-  }
-
-  private async showDone() {
-    await this.clearSession();
-    if (this.renderComponent) {
-      this.renderComponent.unload();
-      this.renderComponent = null;
-    }
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("h3", { text: "All done!" });
-
-    const btnRow = contentEl.createDiv({ cls: "spaced-btn-row" });
-
-    const restartBtn = btnRow.createEl("button", { text: "Restart session", cls: "mod-cta" });
-    restartBtn.addEventListener("click", async () => {
-      this.remaining = this.passed.filter((n) => {
-        const f = this.app.vault.getAbstractFileByPath(n.filepath) as TFile | null;
-        return f ? this.app.metadataCache.getFileCache(f)?.frontmatter?.active === true : false;
-      });
-      this.passed = [];
-      this.failed = [];
-      this.progressLog = [];
-      this.currentRoundSize = this.remaining.length;
-      await this.render();
-    });
-
-    const closeBtn = btnRow.createEl("button", { text: "Close" });
-    closeBtn.addEventListener("click", () => this.close());
   }
 
   private shuffleArray<T>(arr: T[]): T[] {
@@ -390,7 +312,7 @@ export class ActiveModal extends Modal {
     return Array.from(deckSet).sort();
   }
 
-  private createDeckDropdown(anchor: HTMLElement): { dropdown: HTMLElement; outsideHandler: (e: MouseEvent) => void } {
+  private createDeckDropdown(anchor: HTMLElement): HTMLElement {
     const allDecks = this.getAllDeckNames();
 
     const noteFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
@@ -419,13 +341,7 @@ export class ActiveModal extends Modal {
       allDecks.push(trimmed);
       allDecks.sort();
       await writeFrontmatterDecks(this.app, this.note.filepath, currentDecks);
-      // Auto-activate the note when a deck is assigned
-      if (!this.note.active) {
-        this.note = { ...this.note, active: true };
-        await writeFrontmatterActive(this.app, this.note.filepath, true);
-        const activeCheckbox = this.contentEl.querySelector<HTMLInputElement>(".spaced-active-checkbox");
-        if (activeCheckbox) activeCheckbox.checked = true;
-      }
+      await this.autoActivateNote();
       searchInput.value = "";
       renderList("");
     };
@@ -449,13 +365,7 @@ export class ActiveModal extends Modal {
           } else {
             currentDecks.push(deck);
             cb.checked = true;
-            // Auto-activate the note when assigned to a deck
-            if (!this.note.active) {
-              this.note = { ...this.note, active: true };
-              await writeFrontmatterActive(this.app, this.note.filepath, true);
-              const activeCheckbox = this.contentEl.querySelector<HTMLInputElement>(".spaced-active-checkbox");
-              if (activeCheckbox) activeCheckbox.checked = true;
-            }
+            await this.autoActivateNote();
           }
           await writeFrontmatterDecks(this.app, this.note.filepath, currentDecks);
         });
@@ -510,35 +420,70 @@ export class ActiveModal extends Modal {
     };
     setTimeout(() => document.addEventListener("mousedown", outsideHandler), 0);
     searchInput.focus();
-    return { dropdown, outsideHandler };
+    return dropdown;
   }
 
-  close() {
-    if (this.isEditing) {
-      void Promise.all([this.pendingSaveTitle?.(), this.saveBodyEdits()]).then(() => {
-        this.isEditing = false;
-        super.close();
-      });
-      return;
+  private async saveTitle(): Promise<void> {
+    if (!this.isEditing || !this.titleEl) return;
+    const newName = (this.titleEl.textContent ?? "").trim();
+    if (!newName || newName === this.originalTitle) return;
+    const f = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile;
+    if (!f) return;
+    const dir = this.note.filepath.includes("/")
+      ? this.note.filepath.substring(0, this.note.filepath.lastIndexOf("/"))
+      : "";
+    const newPath = dir ? `${dir}/${newName}.md` : `${newName}.md`;
+    await this.app.vault.rename(f, newPath);
+    this.note = { ...this.note, filepath: newPath };
+    this.originalTitle = newName;  
+  }
+
+  private getActiveNotes(notes: NoteRecord[]): NoteRecord[] {
+    return notes.filter((n) => {
+      const f = this.app.vault.getAbstractFileByPath(n.filepath) as TFile | null;
+      return f ? this.app.metadataCache.getFileCache(f)?.frontmatter?.active === true : false;
+    });
+  }
+
+  private async restartSession(sourceNotes: NoteRecord[]) {
+    this.remaining = this.getActiveNotes(sourceNotes);
+    this.passed = [];
+    this.failed = [];
+    this.progressLog = [];
+    this.currentRoundSize = this.remaining.length;
+    await this.render();
+  }
+
+  private cleanupEditors() {
+    this.tiptapEditor?.destroy();
+    this.tiptapEditor = null;
+    this.renderComponent?.unload();
+    this.renderComponent = null;
+  }
+
+  private async autoActivateNote(): Promise<void> {
+    if (this.note.active) return;
+    this.note = { ...this.note, active: true };
+    await writeFrontmatterActive(this.app, this.note.filepath, true);
+    const cb = this.contentEl.querySelector<HTMLInputElement>(".spaced-active-checkbox");
+    if (cb) cb.checked = true;
+  }
+
+  private stripFrontmatter(raw: string): { frontmatter: string; body: string } {
+    if (raw.startsWith("---")) {
+      const end = raw.indexOf("\n---", 3);
+      if (end !== -1) return { frontmatter: raw.slice(0, end + 4), body: raw.slice(end + 4).trimStart() };
     }
-    super.close();
+    return { frontmatter: "", body: raw };
   }
 
   onClose() {
-    void this.pendingSaveTitle?.();
+    void this.saveTitle();
     void this.saveBodyEdits();
-    if (this.tiptapEditor) {
-      this.tiptapEditor.destroy();
-      this.tiptapEditor = null;
-    }
-    if (this.renderComponent) {
-      this.renderComponent.unload();
-      this.renderComponent = null;
-    }
+    this.cleanupEditors();
     this.contentEl.empty();
-    // Save session state if mid-session
-    if (this.remaining.length > 0 || this.passed.length > 0 || this.failed.length > 0) {
-      this.saveSession(); // fire-and-forget is fine here
+    if (this.remaining.length > 0 || this.failed.length > 0) {
+      void this.saveSession();
     }
   }
 }
@@ -605,16 +550,25 @@ export class DeckPickerModal extends Modal {
         const modal = new ActiveModal(this.app, this.plugin, notes, deckName);
         // Resume saved session if available
         const saved = this.plugin.data.cramSessions?.[deckName];
-        if (saved) {
-          const allNotes = [...notes]; // full deck for filepath lookup
-          const toRecord = (fp: string) => allNotes.find((n) => n.filepath === fp) ?? notes[0];
-          modal.resumeSession({
-            remaining: saved.remaining.map(toRecord),
-            passed: saved.passed.map(toRecord),
-            failed: saved.failed.map(toRecord),
-            progressLog: saved.progressLog,
-            currentRoundSize: saved.currentRoundSize,
-          });
+        if (saved && (saved.remaining.length > 0 || saved.failed.length > 0)) {
+          const allNotes = [...notes];
+          const toRecord = (fp: string): NoteRecord | undefined => allNotes.find((n) => n.filepath === fp);
+          const filterRecords = (fps: string[]) => fps.map(toRecord).filter((n): n is NoteRecord => n !== undefined);
+
+          const remaining = filterRecords(saved.remaining);
+          const failed = filterRecords(saved.failed);
+
+          // Only resume if there's actually something left after filtering out renamed/deleted notes
+          if (remaining.length > 0 || failed.length > 0) {
+            const missingCount = saved.remaining.length - remaining.length + saved.failed.length - failed.length;
+
+            modal.resumeSession({
+              remaining,
+              failed,
+              progressLog: saved.progressLog,
+              currentRoundSize: saved.currentRoundSize - missingCount,
+            });
+          }
         }
         modal.open();
       });

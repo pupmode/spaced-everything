@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, ViewStateResult, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, ViewStateResult, setIcon, Menu } from "obsidian";
 import type SpacedEverythingPlugin from "./main";
 import { noteIsDue, today } from "./scheduler";
 import { getNotesFromVault } from "./frontmatter";
@@ -21,6 +21,15 @@ const PERIOD_DAYS: Record<ChartPeriod, number> = {
   "6M": 180,
   "1Y": 365,
   All: Infinity,
+};
+
+const PERIOD_LABELS: Record<ChartPeriod, string> = {
+  "1W": "Week",
+  "2W": "14 days",
+  "1M": "Month",
+  "6M": "Half year",
+  "1Y": "Year",
+  All: "All time",
 };
 
 // ── Module-level chart utilities ───────────────────────────────────────────
@@ -133,22 +142,33 @@ export class StatsView extends ItemView {
     this.addStat(headerEl, "Avg interval", `${avgInterval}d`);
 
     const selectorRow = contentEl.createDiv({ cls: "spaced-chart-selector-row" });
-    const select = selectorRow.createEl("select", { cls: "spaced-chart-select" });
-    const chartOptions = [
+    const chartOptions: { value: typeof this.selectedChart; label: string }[] = [
       { value: "month", label: "Month calendar" },
       { value: "year", label: "Year heatmap" },
       { value: "forecast", label: "Upcoming load" },
       { value: "reviews", label: "Daily reviews" },
       { value: "due", label: "Due notes" },
     ];
-    for (const opt of chartOptions) {
-      const option = select.createEl("option", { text: opt.label });
-      option.value = opt.value;
-      if (opt.value === this.selectedChart) option.selected = true;
-    }
-    select.addEventListener("change", () => {
-      this.selectedChart = select.value as typeof this.selectedChart;
-      this.render();
+    const currentLabel = chartOptions.find((o) => o.value === this.selectedChart)?.label ?? this.selectedChart;
+
+    const chartTriggerWrapper = selectorRow.createDiv({ cls: "spaced-period-wrapper" });
+    const chartTriggerBtn = chartTriggerWrapper.createDiv({ cls: "se-graph-sel" });
+    chartTriggerBtn.createSpan({ text: currentLabel });
+
+    chartTriggerBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const menu = new Menu();
+      for (const opt of chartOptions) {
+        menu.addItem((item) => {
+          item.setTitle(opt.label);
+          item.setChecked(opt.value === this.selectedChart);
+          item.onClick(() => {
+            this.selectedChart = opt.value;
+            this.render();
+          });
+        });
+      }
+      menu.showAtMouseEvent(e);
     });
 
     const chartArea = contentEl.createDiv({ cls: "spaced-chart-area" });
@@ -186,12 +206,14 @@ export class StatsView extends ItemView {
       const dueDateStr = dueDate.toISOString().slice(0, 10);
       if (dueDateStr > todayStr) upcomingDue.set(dueDateStr, (upcomingDue.get(dueDateStr) ?? 0) + 1);
     }
+    const todayYear = parseInt(todayStr.slice(0, 4));
+    const todayMonth = parseInt(todayStr.slice(5, 7)) - 1; // 0-indexed
+    const isThisMonth = this.calendarYear === todayYear && this.calendarMonth === todayMonth;
+    const monthName = new Date(this.calendarYear, this.calendarMonth, 1).toLocaleString("default", { month: "long" });
+    const label = isThisMonth ? "This month" : `${monthName}, ${this.calendarYear}`;
     this.createNavRow(
       chartArea,
-      new Date(this.calendarYear, this.calendarMonth, 1).toLocaleString("default", {
-        month: "long",
-        year: "numeric",
-      }),
+      label,
       () => {
         this.calendarMonth--;
         if (this.calendarMonth < 0) {
@@ -271,7 +293,7 @@ export class StatsView extends ItemView {
   private buildChartScaffold(
     container: HTMLElement,
     data: { date: string; value: number }[],
-    selEl: HTMLSelectElement,
+    selEl: HTMLElement,
   ): { svg: SVGElement; chartH: number; totalH: number; totalW: number; yScale: ScaleLinear<number, number> } {
     const labelH = 24;
     const selH = selEl.offsetHeight + 6;
@@ -540,21 +562,6 @@ export class StatsView extends ItemView {
       .text((d) => fmt(new Date(d.date)));
   }
 
-  private createPeriodSelect(
-    container: HTMLElement,
-    current: ChartPeriod,
-    onChange: (p: ChartPeriod) => void,
-  ): HTMLSelectElement {
-    const selEl = container.createEl("select", { cls: "spaced-period-select" });
-    for (const p of CHART_PERIODS) {
-      const opt = selEl.createEl("option", { text: p });
-      opt.value = p;
-      if (p === current) opt.selected = true;
-    }
-    selEl.addEventListener("change", () => onChange(selEl.value as ChartPeriod));
-    return selEl;
-  }
-
   private createNavRow(container: HTMLElement, label: string, onPrev: () => void, onNext: () => void): void {
     const nav = container.createDiv({ cls: "spaced-nav-row" });
     nav.createSpan({ text: label });
@@ -765,11 +772,39 @@ export class StatsView extends ItemView {
       const cell = grid.createDiv({ cls });
       cell.createSpan({ text: String(d), cls: "se-month-day-num" });
       if (reviewCount > 0) {
-        cell.setAttribute("title", `${reviewCount} review${reviewCount !== 1 ? "s" : ""}`);
+        cell.dataset.tooltip = `${reviewCount} review${reviewCount !== 1 ? "s" : ""}`;
       } else if (isFuture && dueCount > 0) {
-        cell.setAttribute("title", `${dueCount} due`);
+        cell.dataset.tooltip = `${dueCount} due`;
       }
     }
+  }
+
+  private createPeriodSelect(
+    container: HTMLElement,
+    period: ChartPeriod,
+    onPeriodChange: (p: ChartPeriod) => void,
+  ): HTMLElement {
+    const wrapper = container.createDiv({ cls: "spaced-period-wrapper" });
+    const btn = wrapper.createDiv({ cls: "spaced-period-trigger" });
+    const labelEl = btn.createSpan({ text: PERIOD_LABELS[period], cls: "spaced-deck-label" });
+
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const menu = new Menu();
+      for (const p of CHART_PERIODS) {
+        menu.addItem((item) => {
+          item.setTitle(PERIOD_LABELS[p]);
+          item.setChecked(p === period);
+          item.onClick(() => {
+            labelEl.textContent = PERIOD_LABELS[p];
+            onPeriodChange(p);
+          });
+        });
+      }
+      menu.showAtMouseEvent(e);
+    });
+
+    return wrapper;
   }
   // ── Chart: Year Heatmap ───────────────────────────────────────────────────
   private renderYearHeatmap(
