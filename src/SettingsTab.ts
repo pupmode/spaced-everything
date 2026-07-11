@@ -1,5 +1,6 @@
 import type SpacedEverythingPlugin from "./main";
 import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
+import { ReactionSetMode } from "./types";
 
 export class SpacedEverythingSettingsTab extends PluginSettingTab {
   constructor(
@@ -173,6 +174,113 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
         }),
       );
 
+     // Reaction buttons  
+containerEl.createEl("h3", { text: "Reaction buttons" });  
+  
+new Setting(containerEl)  
+  .setName("Reaction set")  
+  .setDesc("Choose which reaction buttons appear during review.")  
+  .addDropdown((drop) =>  
+    drop  
+      .addOption("default", "Default (Exciting / Interesting / …)")  
+      .addOption("anki", "Anki (Easy / Good / Hard / Again)")  
+      .addOption("custom", "Custom")  
+      .setValue(this.plugin.settings.reactionSetMode)  
+      .onChange(async (v) => {  
+        this.plugin.settings.reactionSetMode = v as ReactionSetMode;  
+        await this.plugin.saveSettings();  
+        this.display();  
+      }),  
+  );  
+  
+if (this.plugin.settings.reactionSetMode === "custom") {  
+  const reactions = this.plugin.settings.customReactions;  
+  const n = reactions.length;  
+  
+  containerEl.createEl("p", {  
+    text: "← more often    less often →",  
+    cls: "spaced-reaction-dir-label",  
+  });  
+  
+  reactions.forEach((r, i) => {  
+    const t = n === 1 ? 0.5 : i / (n - 1);  
+    const mult = 0.83 + (1.5 - 0.83) * t;  
+    const easeDelta = Math.round(20 - 40 * t);  
+    const sign = easeDelta >= 0 ? "+" : "";  
+  
+    new Setting(containerEl)  
+      .setName(`${r.id}`)  
+      .setDesc(`interval ×${mult.toFixed(2)}  |  ease ${sign}${easeDelta}`)  
+      .addText((text) =>  
+        text  
+          .setValue(r.label)  
+          .setPlaceholder("Label")  
+          .onChange(async (v) => {  
+            reactions[i].label = v;  
+            await this.plugin.saveSettings();  
+          }),  
+      )  
+      .addButton((btn) =>  
+        btn  
+          .setIcon("arrow-up")  
+          .setTooltip("Move up (more often)")  
+          .setDisabled(i === 0)  
+          .onClick(async () => {  
+            [reactions[i - 1], reactions[i]] = [reactions[i], reactions[i - 1]];  
+            await this.plugin.saveSettings();  
+            this.display();  
+          }),  
+      )  
+      .addButton((btn) =>  
+        btn  
+          .setIcon("arrow-down")  
+          .setTooltip("Move down (less often)")  
+          .setDisabled(i === reactions.length - 1)  
+          .onClick(async () => {  
+            [reactions[i + 1], reactions[i]] = [reactions[i], reactions[i + 1]];  
+            await this.plugin.saveSettings();  
+            this.display();  
+          }),  
+      )  
+      .addButton((btn) =>  
+        btn  
+          .setIcon("trash-2")  
+          .setTooltip("Remove")  
+          .setWarning()  
+          .onClick(async () => {  
+            reactions.splice(i, 1);  
+            await this.plugin.saveSettings();  
+            this.display();  
+          }),  
+      );  
+  });  
+  
+  let newLabel = "";  
+  new Setting(containerEl)  
+    .setName("Add reaction")  
+    .addText((text) =>  
+      text  
+        .setPlaceholder("Label")  
+        .onChange((v) => {  
+          newLabel = v;  
+        }),  
+    )  
+    .addButton((btn) =>  
+      btn.setButtonText("Add").onClick(async () => {  
+        const trimmed = newLabel.trim();  
+        if (!trimmed) return;  
+        const id = trimmed.toLowerCase().replace(/\s+/g, "-");  
+        if (reactions.some((r) => r.id === id)) {  
+          new Notice(`A reaction with id "${id}" already exists.`);  
+          return;  
+        }  
+        reactions.push({ id, label: trimmed });  
+        await this.plugin.saveSettings();  
+        this.display();  
+      }),  
+    );  
+}
+
     // Danger zone
     containerEl.createEl("h3", { text: "Danger Zone" });
 
@@ -190,6 +298,7 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
       );
   }
 }
+
 
 class ResetConfirmModal extends Modal {
   constructor(

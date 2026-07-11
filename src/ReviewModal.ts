@@ -1,5 +1,5 @@
-import { App, ButtonComponent, WorkspaceLeaf, TFile, setIcon, MarkdownRenderer, Component } from "obsidian";
-import { NoteRecord, NoteState, SrsSession } from "./types";
+import { App, ButtonComponent, TFile, setIcon, MarkdownRenderer, Component } from "obsidian";
+import { NoteRecord, ReviewEvent, SrsSession, getActiveReactions } from "./types";
 import { nextInterval, nextEaseFactor, noteIsDue, pickNoteToReview } from "./scheduler";
 import { today } from "./utils";
 import { saveStore } from "./store";
@@ -34,7 +34,6 @@ export class ReviewModal extends BaseNoteModal {
   async onOpen() {
     await this.render();
     this.setupVaultListener();
-    this.patchActiveFile(); 
   }
 
   private async render() {
@@ -221,16 +220,14 @@ export class ReviewModal extends BaseNoteModal {
   // reaction button row
   private renderButtons(contentEl: HTMLElement): void {
     const btnRow = contentEl.createDiv({ cls: "spaced-btn-row" });
-    // Reaction buttons
-    this.addBtn(btnRow, { label: "Exciting", cls: "exciting", cb: () => this.react("exciting") });
-    this.addBtn(btnRow, { label: "Interesting", cls: "interesting", cb: () => this.react("interesting") });
-    this.addBtn(btnRow, { label: "Yeah", cls: "yeah", cb: () => this.react("yeah") });
-    this.addBtn(btnRow, { label: "Lol", cls: "lol", cb: () => this.react("lol") });
-    this.addBtn(btnRow, { label: "Meh", cls: "meh", cb: () => this.react("meh") });
-    this.addBtn(btnRow, { label: "Cringe", cls: "cringe", cb: () => this.react("cringe") });
-    this.addBtn(btnRow, { label: "Taxing", cls: "taxing", cb: () => this.react("taxing") });
+    const reactions = getActiveReactions(this.plugin.settings);
+    reactions.forEach((r, i) => {
+      const btn = this.addBtn(btnRow, { label: r.label, cls: r.id, cb: () => this.react(r.id) });
+      if (i === 0) btn.setCta(); // first reaction gets CTA styling
+    });
     this.addBtn(btnRow, { label: "Revisit soon", cls: "revisit", cb: () => this.react("revisit") });
-    this.addBtn(btnRow, { label: "Route →", cls: "route", cb: () => this.routeNote() });
+    const routeBtn = this.addBtn(btnRow, { label: "Route →", cls: "route", cb: () => this.routeNote() });
+    routeBtn.setCta();
     this.addBtn(btnRow, { label: "Skip", cls: "skip", cb: () => this.react("skip") });
     this.addBtn(btnRow, { label: "Archive", cls: "archive", cb: () => this.archiveNote() });
     this.addBtn(btnRow, { icon: "trash-2", cls: "delete", cb: () => this.deleteNote() });
@@ -254,13 +251,11 @@ export class ReviewModal extends BaseNoteModal {
 
     btn.buttonEl.addClass(`spaced-btn-${opts.cls}`);
     if (opts.modifier) btn.buttonEl.addClass(`mod-${opts.modifier}`);
-    if (opts.cls === "exciting") btn.setCta();
-    if (opts.cls === "route") btn.setCta();
 
     return btn;
   }
 
-  private async react(reaction: NoteState | "skip") {
+  private async react(reaction: string) {
     await this.saveTitle();
     await this.saveBodyEdits();
     this.progressLog.push(this.reactionColor(reaction));
@@ -276,11 +271,12 @@ export class ReviewModal extends BaseNoteModal {
       reaction,
     });
 
-    const newInterval = nextInterval(this.note, reaction);
+    const reactions = getActiveReactions(this.plugin.settings);
+    const newInterval = nextInterval(this.note, reaction, reactions);
     const updatedNote: NoteRecord = {
       ...this.note,
       interval: newInterval,
-      easeFactor: nextEaseFactor(this.note, reaction),
+      easeFactor: nextEaseFactor(this.note, reaction, reactions),
       lastReviewedOn: today(),
       reviewedCount: this.note.reviewedCount + 1,
       noteState: reaction,
@@ -326,7 +322,21 @@ export class ReviewModal extends BaseNoteModal {
   }
 
   private reactionColor(reaction: string): string {
-    return ReviewModal.REACTION_COLORS[reaction] ?? "";
+    const systemColors: Record<string, string> = {
+      revisit: "spaced-seg-blue",
+      route: "spaced-seg-blue",
+      archive: "spaced-seg-yellow",
+      delete: "spaced-seg-red",
+      skip: "spaced-seg-skip",
+    };
+    if (systemColors[reaction]) return systemColors[reaction];
+
+    const ramp = ["spaced-seg-purple", "spaced-seg-green", "spaced-seg-yellow", "spaced-seg-orange", "spaced-seg-red"];
+    const reactions = getActiveReactions(this.plugin.settings);
+    const idx = reactions.findIndex((r) => r.id === reaction);
+    if (idx === -1) return "";
+    const t = reactions.length === 1 ? 0.5 : idx / (reactions.length - 1);
+    return ramp[Math.round(t * (ramp.length - 1))];
   }
 
   private renderProgressBar(container: HTMLElement) {
@@ -343,23 +353,7 @@ export class ReviewModal extends BaseNoteModal {
     this.sessionSize = session.sessionSize;
   }
 
-  private static readonly REACTION_COLORS: Record<string, string> = {
-    exciting: "spaced-seg-purple",
-    interesting: "spaced-seg-green",
-    yeah: "spaced-seg-green",
-    lol: "spaced-seg-yellow",
-    meh: "spaced-seg-orange",
-    cringe: "spaced-seg-red",
-    taxing: "spaced-seg-red",
-    revisit: "spaced-seg-blue",
-    route: "spaced-seg-blue",
-    archive: "spaced-seg-yellow",
-    delete: "spaced-seg-red",
-    skip: "spaced-seg-skip",
-  };
-
   onClose() {
-    this.restoreActiveFile();
     void this.saveTitle();
     void this.saveBodyEdits();
     if (this.sessionSize > 0) {

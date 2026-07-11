@@ -136,6 +136,24 @@ export default class SpacedEverythingPlugin extends Plugin {
       }),
     );
 
+     /* Iterate all markdown files in the vault
+For each file, read frontmatter.decks from metadataCache
+Check if it's an array with any duplicates (i.e., new Set(decks).size < decks.length)
+If so, call writeFrontmatterDecks(this.app, file.path, [...new Set(decks)])
+Show a Notice reporting how many files were fixed
+
+
+    this.addCommand({
+      id: "check-deck-dupes",
+      name: "Check deck duplicates",
+      callback: async () => {
+         iterate all markdown files in vault 
+        const Files = this.app.vault
+          .getMarkdownFiles()
+        
+      },
+    });*/
+
     this.addCommand({
       id: "clear-active-deck",
       name: "Clear active deck (uncheck all notes)",

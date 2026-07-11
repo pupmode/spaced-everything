@@ -87,7 +87,7 @@ export function preprocessMarkdown(markdown: string): string {
 
   // ── Step 1: extract fenced code blocks before any other processing ──
   const codeBlocks: string[] = [];
-  html = html.replace(/```(\w*)[ \t]*\n([\s\S]*?)```/g, (_, lang, code) => {
+  html = html.replace(/```([\w-]*)[ \t]*\n([\s\S]*?)```/g, (_, lang, code) => {
     const placeholder = `\x00CODEBLOCK${codeBlocks.length}\x00`;
     const escaped = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     codeBlocks.push(`<pre><code${lang ? ` class="language-${lang}"` : ""}>${escaped}</code></pre>`);
@@ -160,7 +160,7 @@ export function extractMarkdown(editor: Editor): string {
   md = md.replace(/<span[^>]*data-tag="([^"]*)"[^>]*>.*?<\/span>/g, "#$1");
 
   // Code blocks (must come before inline code and generic tag stripping)
-  md = md.replace(/<pre><code(?:\s+class="language-(\w+)")?>([\s\S]*?)<\/code><\/pre>/g, (_, lang, code) => {
+  md = md.replace(/<pre><code(?:\s+class="language-([\w-]+)")?>([\s\S]*?)<\/code><\/pre>/g, (_, lang, code) => {
     const decoded = code.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
     return `\`\`\`${lang ?? ""}\n${decoded}\`\`\``;
   });

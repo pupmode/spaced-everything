@@ -19,21 +19,19 @@ export interface CramSession {
   currentRoundSize: number;
 }
 
+export interface ReactionDefinition {
+  id: string; // stored in noteState frontmatter (e.g. "exciting", "my-custom")
+  label: string; // shown on the button
+}
+
+export type ReactionSetMode = "default" | "anki" | "custom";
+
 export interface SourceFolder {
   path: string;
   weight: number; // percentage, e.g. 100 = normal, 50 = half weight
-}  
+}
 
-export type NoteState =  
-  | "normal"       // interval * easeFactor * 1.0  / 100 — no reaction, default  
-  | "exciting"     // interval * easeFactor * 0.83 / 100 — see more often; gets priority in selection  
-  | "interesting"  // interval * easeFactor * 0.92 / 100 — slightly more often  
-  | "yeah"         // interval * easeFactor * 1.0  / 100 — neutral agreement  
-  | "lol"          // interval * easeFactor * 1.05 / 100 — slightly less often  
-  | "meh"          // interval * easeFactor * 1.2  / 100 — less often  
-  | "cringe"       // interval * easeFactor * 1.35 / 100 — less often  
-  | "taxing"       // interval * easeFactor * 1.5  / 100 — see less often  
-  | "revisit";     // interval * 0.9 (no easeFactor)     — see soon; matches again_interval()
+export type NoteState = string;
 
 export interface ReviewEvent {
   timestamp: string;
@@ -64,7 +62,9 @@ export interface SpacedEverythingSettings {
   renameFolderWithDeck: boolean;
   recentUndueThreshold: number;
   excitingThreshold: number;
-}  
+  reactionSetMode: ReactionSetMode;
+  customReactions: ReactionDefinition[];
+}
 
 export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
   sourceScope: "vault",
@@ -75,4 +75,29 @@ export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
   renameFolderWithDeck: true,
   recentUndueThreshold: 0.5,
   excitingThreshold: 0.7,
+  reactionSetMode: "default",
+  customReactions: [],
 };
+
+export const PRESET_DEFAULT: ReactionDefinition[] = [
+  { id: "exciting", label: "Exciting" },
+  { id: "interesting", label: "Interesting" },
+  { id: "yeah", label: "Yeah" },
+  { id: "lol", label: "Lol" },
+  { id: "meh", label: "Meh" },
+  { id: "cringe", label: "Cringe" },
+  { id: "taxing", label: "Taxing" },
+];
+
+export const PRESET_ANKI: ReactionDefinition[] = [
+  { id: "easy", label: "Easy" },
+  { id: "good", label: "Good" },
+  { id: "hard", label: "Hard" },
+  { id: "again", label: "Again" },
+];
+
+export function getActiveReactions(settings: SpacedEverythingSettings): ReactionDefinition[] {
+  if (settings.reactionSetMode === "anki") return PRESET_ANKI;
+  if (settings.reactionSetMode === "custom") return settings.customReactions;
+  return PRESET_DEFAULT;
+}

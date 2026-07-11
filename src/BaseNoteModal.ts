@@ -29,21 +29,29 @@ export abstract class BaseNoteModal extends Modal {
 
   // ── Shared methods ─────────────────────────────────────────────────────────
 
-  private originalGetActiveFile: (() => TFile | null) | null = null;
-
-  protected patchActiveFile(): void {
-    if (this.originalGetActiveFile) return; // already patched
-    this.originalGetActiveFile = this.app.workspace.getActiveFile.bind(this.app.workspace);
-    this.app.workspace.getActiveFile = () => this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+  protected setupVaultListener(): void {
+    this.registerEvent(
+      this.app.vault.on("modify", (file) => {
+        if (file.path === this.note.filepath && !this.isEditing) {
+          void this.refreshContent();
+        }
+      }),
+    );
   }
 
-  protected restoreActiveFile(): void {
-    if (this.originalGetActiveFile) {
-      this.app.workspace.getActiveFile = this.originalGetActiveFile;
-      this.originalGetActiveFile = null;
-    }
+  protected async refreshContent(): Promise<void> {
+    if (this.isEditing || !this.renderedContainer) return;
+    const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+    if (!file) return;
+    const raw = await this.app.vault.read(file);
+    const { body } = stripFrontmatter(raw);
+    this.renderedContainer.empty();
+    this.renderComponent?.unload();
+    this.renderComponent = new Component();
+    this.renderComponent.load();
+    await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
   }
-
+  
   protected async saveBodyEdits(): Promise<void> {
     if (!this.isEditing || !this.tiptapEditor) return;
     const newBody = extractMarkdown(this.tiptapEditor);

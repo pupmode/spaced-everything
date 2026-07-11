@@ -1,9 +1,9 @@
-import { App, Component, MarkdownRenderer, TFile, setIcon, WorkspaceLeaf } from "obsidian";
+import { App, Component, Modal, MarkdownRenderer, TFile, setIcon } from "obsidian";
 import { NoteRecord } from "./types";
 import type SpacedEverythingPlugin from "./main";
 import { saveStore } from "./store";
 import { writeFrontmatterActive, writeFrontmatterDecks, stripFrontmatter } from "./frontmatter";
-import { createTiptapEditor } from "./tiptap-editor";
+import { createTiptapEditor, extractMarkdown } from "./tiptap-editor";
 import { QuickNoteModal } from "./QuickNoteModal";
 import { createDeckDropdown } from "./deckDropdown";
 import { BaseNoteModal } from "./BaseNoteModal";
@@ -42,13 +42,12 @@ export class ActiveModal extends BaseNoteModal {
   }
 
   async onOpen() {
+    this.setupVaultListener(); 
     if (this.remaining.length === 0 && this.failed.length > 0) {
       this.showSummary(false);
       return;
     }
     await this.render();
-    this.setupVaultListener();
-    this.patchActiveFile();
   }
 
   private async render() {
@@ -309,7 +308,6 @@ export class ActiveModal extends BaseNoteModal {
   }
 
   onClose() {
-    this.restoreActiveFile();
     void this.saveTitle();
     void this.saveBodyEdits();
     this.cleanupEditors();
