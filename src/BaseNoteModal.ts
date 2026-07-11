@@ -1,4 +1,4 @@
-import { App, Modal, TFile, Component } from "obsidian";
+import { App, Modal, TFile, Component, MarkdownRenderer, WorkspaceLeaf } from "obsidian";
 import { NoteRecord } from "./types";
 import type SpacedEverythingPlugin from "./main";
 import { writeFrontmatterActive, stripFrontmatter } from "./frontmatter";
@@ -28,6 +28,21 @@ export abstract class BaseNoteModal extends Modal {
   }
 
   // ── Shared methods ─────────────────────────────────────────────────────────
+
+  private originalGetActiveFile: (() => TFile | null) | null = null;
+
+  protected patchActiveFile(): void {
+    if (this.originalGetActiveFile) return; // already patched
+    this.originalGetActiveFile = this.app.workspace.getActiveFile.bind(this.app.workspace);
+    this.app.workspace.getActiveFile = () => this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+  }
+
+  protected restoreActiveFile(): void {
+    if (this.originalGetActiveFile) {
+      this.app.workspace.getActiveFile = this.originalGetActiveFile;
+      this.originalGetActiveFile = null;
+    }
+  }
 
   protected async saveBodyEdits(): Promise<void> {
     if (!this.isEditing || !this.tiptapEditor) return;

@@ -1,4 +1,4 @@
-import { App, ButtonComponent, TFile, setIcon, MarkdownRenderer, Component } from "obsidian";
+import { App, ButtonComponent, WorkspaceLeaf, TFile, setIcon, MarkdownRenderer, Component } from "obsidian";
 import { NoteRecord, NoteState, SrsSession } from "./types";
 import { nextInterval, nextEaseFactor, noteIsDue, pickNoteToReview } from "./scheduler";
 import { today } from "./utils";
@@ -33,6 +33,8 @@ export class ReviewModal extends BaseNoteModal {
 
   async onOpen() {
     await this.render();
+    this.setupVaultListener();
+    this.patchActiveFile(); 
   }
 
   private async render() {
@@ -357,6 +359,7 @@ export class ReviewModal extends BaseNoteModal {
   };
 
   onClose() {
+    this.restoreActiveFile();
     void this.saveTitle();
     void this.saveBodyEdits();
     if (this.sessionSize > 0) {
