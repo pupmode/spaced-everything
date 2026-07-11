@@ -1,5 +1,5 @@
 import type SpacedEverythingPlugin from "./main";
-import { App, Modal, PluginSettingTab, Setting } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, Setting } from "obsidian";
 
 export class SpacedEverythingSettingsTab extends PluginSettingTab {
   constructor(
@@ -62,7 +62,7 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
                 this.display();
               }),
           );
-      }  
+      }
 
       let pendingFolder = "";
       new Setting(containerEl)
@@ -130,59 +130,64 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
         }),
       );
 
-      new Setting(containerEl)
-        .setName("Rename folder when renaming deck")
-        .setDesc("If a deck has a matching folder, rename the folder too.")
-        .addToggle((t) =>
-          t.setValue(this.plugin.settings.renameFolderWithDeck).onChange(async (v) => {
-            this.plugin.settings.renameFolderWithDeck = v;
+    new Setting(containerEl)
+      .setName("Rename folder when renaming deck")
+      .setDesc("If a deck has a matching folder, rename the folder too.")
+      .addToggle((t) =>
+        t.setValue(this.plugin.settings.renameFolderWithDeck).onChange(async (v) => {
+          this.plugin.settings.renameFolderWithDeck = v;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(containerEl)
+      .setName("Recent-note priority threshold")
+      .setDesc("Probability (0–1) of trying to show a recently-created unreviewed note first. Default: 0.5")
+      .addText((text) =>
+        text.setValue(String(this.plugin.settings.recentUndueThreshold)).onChange(async (v) => {
+          const n = parseFloat(v);
+          if (!isNaN(n) && n >= 0 && n <= 1) {
+            this.plugin.settings.recentUndueThreshold = n;
             await this.plugin.saveSettings();
-          }),
-        );
+          }
+        }),
+      );
 
-      new Setting(containerEl)
-        .setName("Recent-note priority threshold")
-        .setDesc("Probability (0–1) of trying to show a recently-created unreviewed note first. Default: 0.5")
-        .addText((text) =>
-          text.setValue(String(this.plugin.settings.recentUndueThreshold)).onChange(async (v) => {
-            const n = parseFloat(v);
-            if (!isNaN(n) && n >= 0 && n <= 1) {
-              this.plugin.settings.recentUndueThreshold = n;
-              await this.plugin.saveSettings();
+    new Setting(containerEl)
+      .setName("Exciting-note priority threshold")
+      .setDesc(
+        "Cumulative probability (0–1) of trying to show an exciting note. Must be > recent-note threshold. Default: 0.7",
+      )
+      .addText((text) =>
+        text.setValue(String(this.plugin.settings.excitingThreshold)).onChange(async (v) => {
+          const n = parseFloat(v);
+          if (!isNaN(n) && n >= 0 && n <= 1) {
+            if (n <= this.plugin.settings.recentUndueThreshold) {
+              new Notice("Exciting threshold must be greater than recent-note threshold.");
+              return;
             }
-          }),
-        );
+            this.plugin.settings.excitingThreshold = n;
+            await this.plugin.saveSettings();
+          }
+          
+        }),
+      );
 
-      new Setting(containerEl)
-        .setName("Exciting-note priority threshold")
-        .setDesc(
-          "Cumulative probability (0–1) of trying to show an exciting note. Must be > recent-note threshold. Default: 0.7",
-        )
-        .addText((text) =>
-          text.setValue(String(this.plugin.settings.excitingThreshold)).onChange(async (v) => {
-            const n = parseFloat(v);
-            if (!isNaN(n) && n >= 0 && n <= 1) {
-              this.plugin.settings.excitingThreshold = n;
-              await this.plugin.saveSettings();
-            }
-          }),
-        );
+    // Danger zone
+    containerEl.createEl("h3", { text: "Danger Zone" });
 
-    // Danger zone  
-  containerEl.createEl("h3", { text: "Danger Zone" });  
-    
-  new Setting(containerEl)  
-    .setName("Reset all scheduling data")  
-    .setDesc(  
-      "Permanently deletes all review history, intervals, and note states. " +  
-      "Your note files are not affected. This cannot be undone."  
-    )  
-    .addButton(btn =>  
-      btn  
-        .setButtonText("Reset data")  
-        .setWarning()  
-        .onClick(() => new ResetConfirmModal(this.app, this.plugin).open())  
-    );
+    new Setting(containerEl)
+      .setName("Reset all scheduling data")
+      .setDesc(
+        "Permanently deletes all review history, intervals, and note states. " +
+          "Your note files are not affected. This cannot be undone.",
+      )
+      .addButton((btn) =>
+        btn
+          .setButtonText("Reset data")
+          .setWarning()
+          .onClick(() => new ResetConfirmModal(this.app, this.plugin).open()),
+      );
   }
 }
 

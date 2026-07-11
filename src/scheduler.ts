@@ -1,4 +1,5 @@
 import { NoteRecord, NoteState, SpacedEverythingSettings } from "./types";  
+import { today } from "./utils";
 
 const MAX_INTERVAL = 365; // days — prevents notes from disappearing for years  
 const MAX_EASE = 500;     // percentage — prevents runaway acceleration
@@ -7,10 +8,6 @@ function folderWeight(filepath: string, settings: SpacedEverythingSettings): num
   if (settings.sourceScope !== "folder") return 1;
   const entry = settings.sourceFolders.find((e) => filepath.startsWith(e.path + "/"));
   return entry ? entry.weight / 100 : 1;
-}
-
-export function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 export function daysBetween(a: string, b: string): number {

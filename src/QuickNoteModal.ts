@@ -1,6 +1,8 @@
-import { App, Modal, TFile, TFolder, FuzzySuggestModal, Notice, setIcon } from "obsidian";
+import { App, Modal, TFolder, FuzzySuggestModal, Notice, setIcon } from "obsidian";
 import type SpacedEverythingPlugin from "./main";
 import { writeFrontmatterActive, writeFrontmatterDecks } from "./frontmatter";
+import { getAllDeckNames } from "./utils";
+import { createDeckDropdown } from "./deckDropdown";
 
 export class QuickNoteModal extends Modal {
   private titleInput!: HTMLInputElement;
@@ -45,15 +47,11 @@ export class QuickNoteModal extends Modal {
     this.updateDeckLabel(deckLabel);
 
     let deckDropdown: HTMLElement | null = null;
-    deckBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (deckDropdown && document.contains(deckDropdown)) {
-        deckDropdown.remove();
-        deckDropdown = null;
-        return;
-      }
-      deckDropdown = this.createDeckDropdown(deckWrapper, deckLabel);
-    });
+    deckDropdown = createDeckDropdown(this.app, deckWrapper, [...this.selectedDecks], (decks) => {
+      this.selectedDecks = [...decks];
+      this.updateDeckLabel(deckLabel);
+      this.updateLocationLabel();
+    }).dropdown;
 
     // "Add to current deck" checkbox — only shown when opened from ActiveModal
     if (this.deckName) {
@@ -155,110 +153,6 @@ export class QuickNoteModal extends Modal {
     } catch (e) {
       new Notice(`Could not create note: ${(e as Error).message}`);
     }
-  }
-
-  private getAllDeckNames(): string[] {
-    const deckSet = new Set<string>();
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const decks = this.app.metadataCache.getFileCache(file)?.frontmatter?.decks;
-      if (Array.isArray(decks))
-        decks.forEach((d: string) => {
-          if (d) deckSet.add(d);
-        });
-      else if (typeof decks === "string" && decks) deckSet.add(decks);
-    }
-    return Array.from(deckSet).sort();
-  }
-
-  private createDeckDropdown(anchor: HTMLElement, label: HTMLSpanElement): HTMLElement {
-    const allDecks = this.getAllDeckNames();
-    const dropdown = anchor.createDiv({ cls: "spaced-deck-dropdown" });
-
-    const searchInput = dropdown.createEl("input");
-    searchInput.type = "text";
-    searchInput.placeholder = "Search decks…";
-    searchInput.addClass("spaced-deck-search");
-
-    const listEl = dropdown.createDiv({ cls: "spaced-deck-list" });
-
-    const addDeck = (name: string) => {
-      const trimmed = name.trim();
-      if (!trimmed || this.selectedDecks.includes(trimmed)) return;
-      this.selectedDecks.push(trimmed);
-      if (!allDecks.includes(trimmed)) {
-        allDecks.push(trimmed);
-        allDecks.sort();
-      }
-      this.updateDeckLabel(label);
-      this.updateLocationLabel();
-      searchInput.value = "";
-      renderList("");
-    };
-
-    const renderList = (filter: string) => {
-      listEl.empty();
-      const filtered = allDecks.filter((d) => d.toLowerCase().includes(filter.toLowerCase()));
-      for (const deck of filtered) {
-        const item = listEl.createDiv({ cls: "spaced-deck-item" });
-        const cb = item.createEl("input");
-        cb.type = "checkbox";
-        cb.checked = this.selectedDecks.includes(deck);
-        item.createSpan({ text: deck });
-        item.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const idx = this.selectedDecks.indexOf(deck);
-          if (idx >= 0) {
-            this.selectedDecks.splice(idx, 1);
-            cb.checked = false;
-          } else {
-            this.selectedDecks.push(deck);
-            cb.checked = true;
-          }
-          this.updateDeckLabel(label);
-          this.updateLocationLabel();
-        });
-      }
-      if (filter.trim()) {
-        const addItem = listEl.createDiv({ cls: "spaced-deck-item spaced-deck-add" });
-        setIcon(addItem.createDiv({ cls: "spaced-deck-add-icon" }), "circle-plus");
-        addItem.createSpan({ text: `Add "${filter.trim()}"` });
-        addItem.addEventListener("mousedown", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          addDeck(filter.trim());
-        });
-      }
-    };
-
-    renderList("");
-    searchInput.addEventListener("input", () => renderList(searchInput.value));
-    searchInput.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter") return;
-      const filter = searchInput.value.trim();
-      if (!filter) return;
-      const filtered = allDecks.filter((d) => d.toLowerCase().includes(filter.toLowerCase()));
-      if (filtered.length === 1) {
-        const idx = this.selectedDecks.indexOf(filtered[0]);
-        if (idx >= 0) this.selectedDecks.splice(idx, 1);
-        else this.selectedDecks.push(filtered[0]);
-        this.updateDeckLabel(label);
-        this.updateLocationLabel();
-        renderList(filter);
-      } else if (filtered.length === 0) {
-        addDeck(filter);
-      }
-      e.preventDefault();
-    });
-
-    const outsideHandler = (e: MouseEvent) => {
-      if (!document.contains(dropdown) || !dropdown.contains(e.target as Node)) {
-        dropdown.remove();
-        document.removeEventListener("mousedown", outsideHandler);
-      }
-    };
-    setTimeout(() => document.addEventListener("mousedown", outsideHandler), 0);
-    searchInput.focus();
-    return dropdown;
   }
 
   onClose() {

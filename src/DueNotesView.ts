@@ -68,7 +68,10 @@ export class DueNotesView extends ItemView {
       });
 
       title.addEventListener("click", () => {
-        new ReviewModal(this.app, this.plugin, note).open();
+        const modal = new ReviewModal(this.app, this.plugin, note);
+        const saved = this.plugin.data.srsSession;
+        if (saved) modal.resumeSession(saved);
+        modal.open();
       });
     }
   }

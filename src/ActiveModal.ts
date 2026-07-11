@@ -2,33 +2,24 @@ import { App, Component, Modal, MarkdownRenderer, TFile, setIcon } from "obsidia
 import { NoteRecord } from "./types";
 import type SpacedEverythingPlugin from "./main";
 import { saveStore } from "./store";
-import { writeFrontmatterActive, writeFrontmatterDecks } from "./frontmatter";
+import { writeFrontmatterActive, writeFrontmatterDecks, stripFrontmatter } from "./frontmatter";
 import { createTiptapEditor, extractMarkdown } from "./tiptap-editor";
-import type { Editor } from "@tiptap/core";
-import { readNoteRecord } from "./frontmatter";
 import { QuickNoteModal } from "./QuickNoteModal";
+import { createDeckDropdown } from "./deckDropdown";
+import { BaseNoteModal } from "./BaseNoteModal";
 
-export class ActiveModal extends Modal {
-  private renderComponent: Component | null = null;
-  private tiptapEditor: Editor | null = null;
-  private renderedContainer: HTMLElement | null = null;
-  private tiptapContainer: HTMLElement | null = null;
-  private isEditing = false;
-
+export class ActiveModal extends BaseNoteModal {
   private remaining: NoteRecord[];
   private passed: NoteRecord[] = [];
   private failed: NoteRecord[] = [];
   private progressLog: ("pass" | "fail")[] = [];
   private currentRoundSize: number;
-  private note!: NoteRecord;
-  private titleEl: HTMLElement | null = null;
-  private originalTitle = "";
-
+  protected note!: NoteRecord;
   private allNotes: NoteRecord[] = [];
 
   constructor(
     app: App,
-    private plugin: SpacedEverythingPlugin,
+    protected plugin: SpacedEverythingPlugin,
     notes: NoteRecord[],
     private deckName: string = "default",
   ) {
@@ -143,8 +134,19 @@ export class ActiveModal extends Modal {
         deckDropdown = null;
         return;
       }
-      deckDropdown = null;
-      deckDropdown = this.createDeckDropdown(deckWrapper);
+      const noteFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+      const rawDecks = noteFile ? this.app.metadataCache.getFileCache(noteFile)?.frontmatter?.decks : undefined;
+      const initialDecks: string[] = Array.isArray(rawDecks)
+        ? [...rawDecks]
+        : typeof rawDecks === "string" && rawDecks
+          ? [rawDecks]
+          : [];
+
+      const result = createDeckDropdown(this.app, deckWrapper, initialDecks, async (decks) => {
+        await writeFrontmatterDecks(this.app, this.note.filepath, decks);
+        await this.autoActivateNote();
+      });
+      deckDropdown = result.dropdown;
     });
 
     // Active checkbox (no label, larger)
@@ -173,7 +175,7 @@ export class ActiveModal extends Modal {
       contentEl.createEl("p", { text: `File not found: ${note.filepath}` });
     } else {
       const raw = await this.app.vault.read(file);
-      const { body } = this.stripFrontmatter(raw);
+      const { body } = stripFrontmatter(raw);
       this.renderedContainer = contentEl.createDiv({ cls: "spaced-note-content spaced-note-rendered" });
       this.tiptapContainer = contentEl.createDiv({ cls: "spaced-note-content" });
       if (this.isEditing) {
@@ -191,11 +193,15 @@ export class ActiveModal extends Modal {
     const failBtn = btnRow.createEl("button", { text: "Retry", cls: "spaced-btn spaced-btn-fail" });
     const shuffleBtn = btnRow.createEl("button", { cls: "spaced-btn spaced-btn-icon" });
     setIcon(shuffleBtn, "shuffle");
+    const routeBtn = btnRow.createEl("button", { cls: "spaced-btn spaced-btn-route" });
+    setIcon(routeBtn, "route");
     shuffleBtn.setAttribute("aria-label", "Shuffle remaining cards");
     shuffleBtn.addEventListener("click", async () => {
       this.remaining = this.shuffleArray(this.remaining);
       await this.render();
     });
+    routeBtn.addEventListener("click", () => this.routeNote());
+    routeBtn.setAttribute("aria-label", "Route →");
     passBtn.addEventListener("click", () => this.respond("pass"));
     failBtn.addEventListener("click", () => this.respond("fail"));
 
@@ -211,17 +217,6 @@ export class ActiveModal extends Modal {
       if (result === "pass") seg.addClass("spaced-active-progress-pass");
       else if (result === "fail") seg.addClass("spaced-active-progress-fail");
     }
-  }
-
-  private async saveBodyEdits(): Promise<void> {
-    if (!this.tiptapEditor || !this.isEditing) return;
-    const markdown = extractMarkdown(this.tiptapEditor);
-    const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
-    if (!file) return;
-    const existing = await this.app.vault.read(file);
-    const { frontmatter, body } = this.stripFrontmatter(existing);
-    if (markdown.trim() === body.trim()) return;
-    await this.app.vault.modify(file, frontmatter ? `${frontmatter}\n${markdown}` : markdown);
   }
 
   private async respond(result: "pass" | "fail") {
@@ -295,148 +290,6 @@ export class ActiveModal extends Modal {
     return a;
   }
 
-  private getAllDeckNames(): string[] {
-    const deckSet = new Set<string>();
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const cache = this.app.metadataCache.getFileCache(file);
-      const decks = cache?.frontmatter?.decks;
-      if (Array.isArray(decks)) {
-        decks.forEach((d: string) => {
-          if (d) deckSet.add(d);
-        });
-      } else if (typeof decks === "string" && decks) {
-        deckSet.add(decks);
-      }
-    }
-    return Array.from(deckSet).sort();
-  }
-
-  private createDeckDropdown(anchor: HTMLElement): HTMLElement {
-    const allDecks = this.getAllDeckNames();
-
-    const noteFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
-    const cache = noteFile ? this.app.metadataCache.getFileCache(noteFile) : null;
-    const rawDecks = cache?.frontmatter?.decks;
-    const currentDecks: string[] = Array.isArray(rawDecks)
-      ? [...rawDecks]
-      : typeof rawDecks === "string" && rawDecks
-        ? [rawDecks]
-        : [];
-
-    const dropdown = anchor.createDiv({ cls: "spaced-deck-dropdown" });
-
-    const searchInput = dropdown.createEl("input");
-    searchInput.type = "text";
-    searchInput.placeholder = "Search decks…";
-    searchInput.addClass("spaced-deck-search");
-
-    const listEl = dropdown.createDiv({ cls: "spaced-deck-list" });
-
-    // Helper: create a new deck and assign it to the note
-    const addDeck = async (name: string) => {
-      const trimmed = name.trim();
-      if (!trimmed || currentDecks.includes(trimmed)) return;
-      currentDecks.push(trimmed);
-      allDecks.push(trimmed);
-      allDecks.sort();
-      await writeFrontmatterDecks(this.app, this.note.filepath, currentDecks);
-      await this.autoActivateNote();
-      searchInput.value = "";
-      renderList("");
-    };
-
-    const renderList = (filter: string) => {
-      listEl.empty();
-      const filtered = allDecks.filter((d) => d.toLowerCase().includes(filter.toLowerCase()));
-
-      for (const deck of filtered) {
-        const item = listEl.createDiv({ cls: "spaced-deck-item" });
-        const cb = item.createEl("input");
-        cb.type = "checkbox";
-        cb.checked = currentDecks.includes(deck);
-        item.createSpan({ text: deck });
-        item.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          const idx = currentDecks.indexOf(deck);
-          if (idx >= 0) {
-            currentDecks.splice(idx, 1);
-            cb.checked = false;
-          } else {
-            currentDecks.push(deck);
-            cb.checked = true;
-            await this.autoActivateNote();
-          }
-          await writeFrontmatterDecks(this.app, this.note.filepath, currentDecks);
-        });
-      }
-
-      // Always show "Add deck" at the bottom when the user has typed something
-      if (filter.trim()) {
-        const addItem = listEl.createDiv({ cls: "spaced-deck-item spaced-deck-add" });
-        const iconEl = addItem.createDiv({ cls: "spaced-deck-add-icon" });
-        setIcon(iconEl, "circle-plus");
-        addItem.createSpan({ text: `Add "${filter.trim()}"` });
-        addItem.addEventListener("mousedown", async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          await addDeck(filter.trim());
-        });
-      }
-    };
-
-    renderList("");
-    searchInput.addEventListener("input", () => renderList(searchInput.value));
-
-    searchInput.addEventListener("keydown", async (e) => {
-      if (e.key !== "Enter") return;
-      const filter = searchInput.value.trim();
-      if (!filter) return;
-      const filtered = allDecks.filter((d) => d.toLowerCase().includes(filter.toLowerCase()));
-      if (filtered.length === 1) {
-        // Single match — toggle it
-        const deck = filtered[0];
-        const idx = currentDecks.indexOf(deck);
-        if (idx >= 0) {
-          currentDecks.splice(idx, 1);
-        } else {
-          currentDecks.push(deck);
-        }
-        await writeFrontmatterDecks(this.app, this.note.filepath, currentDecks);
-        renderList(filter);
-      } else if (filtered.length === 0) {
-        // No matches — create the new deck
-        await addDeck(filter);
-      }
-      e.preventDefault();
-    });
-
-    // Close on outside click
-    const outsideHandler = (e: MouseEvent) => {
-      if (!document.contains(dropdown) || !dropdown.contains(e.target as Node)) {
-        dropdown.remove();
-        document.removeEventListener("mousedown", outsideHandler);
-      }
-    };
-    setTimeout(() => document.addEventListener("mousedown", outsideHandler), 0);
-    searchInput.focus();
-    return dropdown;
-  }
-
-  private async saveTitle(): Promise<void> {
-    if (!this.isEditing || !this.titleEl) return;
-    const newName = (this.titleEl.textContent ?? "").trim();
-    if (!newName || newName === this.originalTitle) return;
-    const f = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile;
-    if (!f) return;
-    const dir = this.note.filepath.includes("/")
-      ? this.note.filepath.substring(0, this.note.filepath.lastIndexOf("/"))
-      : "";
-    const newPath = dir ? `${dir}/${newName}.md` : `${newName}.md`;
-    await this.app.vault.rename(f, newPath);
-    this.note = { ...this.note, filepath: newPath };
-    this.originalTitle = newName;
-  }
-
   private getActiveNotes(notes: NoteRecord[]): NoteRecord[] {
     return notes.filter((n) => {
       const f = this.app.vault.getAbstractFileByPath(n.filepath) as TFile | null;
@@ -453,29 +306,6 @@ export class ActiveModal extends Modal {
     await this.render();
   }
 
-  private cleanupEditors() {
-    this.tiptapEditor?.destroy();
-    this.tiptapEditor = null;
-    this.renderComponent?.unload();
-    this.renderComponent = null;
-  }
-
-  private async autoActivateNote(): Promise<void> {
-    if (this.note.active) return;
-    this.note = { ...this.note, active: true };
-    await writeFrontmatterActive(this.app, this.note.filepath, true);
-    const cb = this.contentEl.querySelector<HTMLInputElement>(".spaced-active-checkbox");
-    if (cb) cb.checked = true;
-  }
-
-  private stripFrontmatter(raw: string): { frontmatter: string; body: string } {
-    if (raw.startsWith("---")) {
-      const end = raw.indexOf("\n---", 3);
-      if (end !== -1) return { frontmatter: raw.slice(0, end + 4), body: raw.slice(end + 4).trimStart() };
-    }
-    return { frontmatter: "", body: raw };
-  }
-
   onClose() {
     void this.saveTitle();
     void this.saveBodyEdits();
@@ -484,188 +314,5 @@ export class ActiveModal extends Modal {
     if (this.remaining.length > 0 || this.failed.length > 0) {
       void this.saveSession();
     }
-  }
-}
-
-export class DeckPickerModal extends Modal {
-  constructor(
-    app: App,
-    private plugin: SpacedEverythingPlugin,
-  ) {
-    super(app);
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.createEl("h2", { text: "Choose a deck" });
-
-    // Collect deck → notes mapping from metadataCache
-    const deckMap = new Map<string, NoteRecord[]>();
-
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-      if (!fm?.active) continue;
-
-      const decks: string[] = Array.isArray(fm.decks) && fm.decks.length > 0 ? fm.decks : ["default"];
-      const record: NoteRecord = readNoteRecord(
-        this.app,
-        file,
-        this.plugin.settings.defaultEaseFactor,
-        this.plugin.settings.initialInterval,
-      );
-
-      for (const deck of decks) {
-        if (!deckMap.has(deck)) deckMap.set(deck, []);
-        deckMap.get(deck)!.push(record);
-      }
-    }
-
-    if (deckMap.size === 0) {
-      contentEl.createEl("p", { text: "No active notes found." });
-      return;
-    }
-
-    // Sort: most recently used first; "default" always listed
-    const lastUsed = this.plugin.data.deckLastUsed ?? {};
-    const sorted = [...deckMap.keys()].sort((a, b) => {
-      const ta = lastUsed[a] ?? "";
-      const tb = lastUsed[b] ?? "";
-      return tb.localeCompare(ta); // descending
-    });
-
-    for (const deckName of sorted) {
-      const notes = deckMap.get(deckName)!;
-      const row = contentEl.createDiv({ cls: "spaced-deck-row" });
-
-      const btn = row.createEl("button", {
-        text: `${deckName === "default" ? "Default deck" : deckName} (${notes.length})`,
-        cls: "mod-cta spaced-deck-pick-btn",
-      });
-      btn.addEventListener("click", () => {
-        // Record last used
-        this.plugin.data.deckLastUsed = { ...lastUsed, [deckName]: new Date().toISOString() };
-        this.close();
-        const modal = new ActiveModal(this.app, this.plugin, notes, deckName);
-        // Resume saved session if available
-        const saved = this.plugin.data.cramSessions?.[deckName];
-        if (saved && (saved.remaining.length > 0 || saved.failed.length > 0)) {
-          const allNotes = [...notes];
-          const toRecord = (fp: string): NoteRecord | undefined => allNotes.find((n) => n.filepath === fp);
-          const filterRecords = (fps: string[]) => fps.map(toRecord).filter((n): n is NoteRecord => n !== undefined);
-
-          const remaining = filterRecords(saved.remaining);
-          const failed = filterRecords(saved.failed);
-
-          // Only resume if there's actually something left after filtering out renamed/deleted notes
-          if (remaining.length > 0 || failed.length > 0) {
-            const missingCount = saved.remaining.length - remaining.length + saved.failed.length - failed.length;
-
-            modal.resumeSession({
-              remaining,
-              failed,
-              progressLog: saved.progressLog,
-              currentRoundSize: saved.currentRoundSize - missingCount,
-            });
-          }
-        }
-        modal.open();
-      });
-
-      if (deckName !== "default") {
-        const renameBtn = row.createDiv({ cls: "spaced-hdr-btn" });
-        setIcon(renameBtn, "pencil");
-        renameBtn.setAttribute("aria-label", "Rename deck");
-        renameBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-
-          // Swap button for an input
-          const input = document.createElement("input");
-          input.className = "spaced-deck-rename-input";
-          input.value = deckName;
-          btn.replaceWith(input);
-          renameBtn.remove();
-          input.focus();
-          input.select();
-
-          const cancel = () => {
-            input.replaceWith(btn);
-            row.appendChild(renameBtn);
-          };
-
-          const confirm = async () => {
-            if (submitted) return;
-            submitted = true;
-            const newName = input.value.trim();
-            if (!newName || newName === deckName) {
-              cancel();
-              return;
-            }
-            await this.renameDeck(deckName, newName);
-          };
-
-          input.addEventListener("keydown", async (e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              await confirm();
-            }
-            if (e.key === "Escape") {
-              e.preventDefault();
-              cancel();
-            }
-          });
-
-          input.addEventListener("blur", () => {
-            void confirm();
-          });
-        });
-      }
-    }
-  }
-
-  private async renameDeck(oldName: string, newName: string): Promise<void> {
-    // 1. Update frontmatter first (before folder rename changes file paths)
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const decks = this.app.metadataCache.getFileCache(file)?.frontmatter?.decks;
-      if (!Array.isArray(decks) || !decks.includes(oldName)) continue;
-      await writeFrontmatterDecks(
-        this.app,
-        file.path,
-        decks.map((d: string) => (d === oldName ? newName : d)),
-      );
-    }
-
-    // 2. Optionally rename matching folder
-    if (this.plugin.settings.renameFolderWithDeck) {
-      const matchingFolders = this.app.vault.getAllFolders().filter((f) => f.name === oldName);
-      if (matchingFolders.length === 1) {
-        const folder = matchingFolders[0];
-        const parentPath = folder.parent?.path;
-        const newFolderPath = parentPath && parentPath !== "/" ? `${parentPath}/${newName}` : newName;
-        await this.app.vault.rename(folder, newFolderPath);
-      } else if (matchingFolders.length > 1) {
-        new Notice(`Deck renamed, but folder was not renamed: multiple folders named "${oldName}" exist.`);
-      }
-    }
-
-    // 3. Migrate plugin data keys
-    const lastUsed = this.plugin.data.deckLastUsed;
-    if (lastUsed?.[oldName] !== undefined) {
-      lastUsed[newName] = lastUsed[oldName];
-      delete lastUsed[oldName];
-    }
-
-    const sessions = this.plugin.data.cramSessions;
-    if (sessions?.[oldName] !== undefined) {
-      sessions[newName] = sessions[oldName];
-      delete sessions[oldName];
-    }
-
-    await saveStore(this.plugin, this.plugin.data);
-    this.onOpen();
-  }
-
-  onClose() {
-    this.contentEl.empty();
   }
 }

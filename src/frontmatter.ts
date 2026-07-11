@@ -1,6 +1,6 @@
 import { App, TFile } from "obsidian";
 import { NoteRecord, SpacedEverythingSettings } from "./types";
-import { today } from "./scheduler";
+import { today } from "./utils";
 
 function daysAgo(n: number): string {
   const d = new Date();
@@ -102,3 +102,10 @@ export async function writeFrontmatterDecks(app: App, filepath: string, decks: s
   });
 }
 
+export function stripFrontmatter(raw: string): { frontmatter: string; body: string } {
+    if (raw.startsWith("---")) {
+      const end = raw.indexOf("\n---", 3);
+      if (end !== -1) return { frontmatter: raw.slice(0, end + 4), body: raw.slice(end + 4).trimStart() };
+    }
+    return { frontmatter: "", body: raw };
+  }

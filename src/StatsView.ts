@@ -1,8 +1,9 @@
 import { ItemView, WorkspaceLeaf, ViewStateResult, setIcon, Menu } from "obsidian";
 import type SpacedEverythingPlugin from "./main";
-import { noteIsDue, today } from "./scheduler";
+import { noteIsDue } from "./scheduler";
+import { today } from "./utils";
 import { getNotesFromVault } from "./frontmatter";
-import { ReviewEvent } from "./types";
+import { ReviewEvent, NoteRecord } from "./types";
 import { scaleLinear, scaleTime, scaleBand, ScaleLinear } from "d3-scale";
 import { line as d3Line, area as d3Area } from "d3-shape";
 import { timeFormat } from "d3-time-format";
@@ -253,7 +254,8 @@ export class StatsView extends ItemView {
   }
 
   private renderForecastSection(chartArea: HTMLElement, activeNotes: NoteRecord[], todayStr: string): void {
-    const forecastData = this.buildForecastData(activeNotes, todayStr);
+    const forecastDays = Math.min(PERIOD_DAYS[this.forecastChartPeriod], 730);
+    const forecastData = this.buildForecastData(activeNotes, todayStr, forecastDays);
     this.renderForecastChart(chartArea, forecastData, this.forecastChartPeriod, (p) => {
       this.forecastChartPeriod = p;
       this.render();
@@ -280,10 +282,15 @@ export class StatsView extends ItemView {
         cls: "spaced-muted",
       });
     } else {
-      this.renderBarTrendChart(chartArea, this.buildDailyDueData(log), this.dueChartPeriod, (p) => {
-        this.dueChartPeriod = p;
-        this.render();
-      });
+      this.renderBarTrendChart(
+        chartArea,
+        this.buildDailyData(log, (e) => e.numDue, true),
+        this.dueChartPeriod,
+        (p) => {
+          this.dueChartPeriod = p;
+          this.render();
+        },
+      );
     }
   }
 
@@ -590,27 +597,6 @@ export class StatsView extends ItemView {
   }
 
   // ── Data builders ─────────────────────────────────────────────────────────
-  private buildDailyDueData(log: { timestamp: string; numDue: number }[]): { date: string; value: number }[] {
-    const byDay = new Map<string, number>();
-    for (const e of log) {
-      const d = e.timestamp.slice(0, 10);
-      // Overwrite: keep the last sync's numDue for each day
-      byDay.set(d, e.numDue);
-    }
-    if (byDay.size === 0) return [];
-    const todayStr = today();
-    const start = [...byDay.keys()].sort()[0];
-    const result: { date: string; value: number }[] = [];
-    const cur = new Date(start);
-    const end = new Date(todayStr);
-    while (cur <= end) {
-      const d = cur.toISOString().slice(0, 10);
-      result.push({ date: d, value: byDay.get(d) ?? 0 });
-      cur.setDate(cur.getDate() + 1);
-    }
-    return result;
-  }
-
   private buildPracticedCounts(events: { timestamp: string }[]): Map<string, number> {
     const counts = new Map<string, number>();
     for (const e of events) {
@@ -627,6 +613,7 @@ export class StatsView extends ItemView {
   private buildForecastData(
     activeNotes: { lastReviewedOn: string; interval: number }[],
     todayStr: string,
+    days = 730,
   ): { date: string; value: number }[] {
     const dueByDate = new Map<string, number>();
     for (const note of activeNotes) {
@@ -638,7 +625,7 @@ export class StatsView extends ItemView {
     }
     const result: { date: string; value: number }[] = [];
     const start = new Date(todayStr);
-    for (let i = 0; i < 730; i++) {
+    for (let i = 0; i < days; i++) {
       const cur = new Date(start);
       cur.setDate(cur.getDate() + i);
       const d = cur.toISOString().slice(0, 10);
@@ -650,11 +637,16 @@ export class StatsView extends ItemView {
   private buildDailyData<T extends { timestamp: string }>(
     entries: T[],
     getValue: (entry: T) => number,
+    overwrite = false,
   ): { date: string; value: number }[] {
     const byDay = new Map<string, number>();
     for (const e of entries) {
       const d = e.timestamp.slice(0, 10);
-      byDay.set(d, (byDay.get(d) ?? 0) + getValue(e));
+      if (overwrite) {
+        byDay.set(d, getValue(e)); // keep last value for the day
+      } else {
+        byDay.set(d, (byDay.get(d) ?? 0) + getValue(e)); // accumulate
+      }
     }
     if (byDay.size === 0) return [];
     const todayStr = today();
