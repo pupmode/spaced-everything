@@ -12,6 +12,12 @@ export interface NoteRecord {
   decks?: string[];
 }
 
+export interface CustomReactionSet {
+  id: string;
+  name: string;
+  reactions: ReactionDefinition[];
+}
+
 export interface CramSession {
   remaining: string[]; // filepaths
   failed: string[]; // filepaths
@@ -22,9 +28,13 @@ export interface CramSession {
 export interface ReactionDefinition {
   id: string; // stored in noteState frontmatter (e.g. "exciting", "my-custom")
   label: string; // shown on the button
+  manualOverride?: boolean;
+  intervalMult?: number; // replaces the lerp'd multiplier (e.g. 1.2 = ×1.2)
+  easeDelta?: number; // replaces the lerp'd delta (e.g. +10 or -15)
+  color?: string;
 }
 
-export type ReactionSetMode = "default" | "anki" | "custom";
+export type ReactionSetMode = "default" | "anki" | (string & {});
 
 export interface SourceFolder {
   path: string;
@@ -63,7 +73,7 @@ export interface SpacedEverythingSettings {
   recentUndueThreshold: number;
   excitingThreshold: number;
   reactionSetMode: ReactionSetMode;
-  customReactions: ReactionDefinition[];
+  customReactionSets: CustomReactionSet[];
 }
 
 export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
@@ -76,7 +86,7 @@ export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
   recentUndueThreshold: 0.5,
   excitingThreshold: 0.7,
   reactionSetMode: "default",
-  customReactions: [],
+  customReactionSets: [],
 };
 
 export const PRESET_DEFAULT: ReactionDefinition[] = [
@@ -98,6 +108,7 @@ export const PRESET_ANKI: ReactionDefinition[] = [
 
 export function getActiveReactions(settings: SpacedEverythingSettings): ReactionDefinition[] {
   if (settings.reactionSetMode === "anki") return PRESET_ANKI;
-  if (settings.reactionSetMode === "custom") return settings.customReactions;
+  const activeSet = settings.customReactionSets?.find((s) => s.id === settings.reactionSetMode);
+  if (activeSet) return activeSet.reactions;
   return PRESET_DEFAULT;
 }

@@ -42,12 +42,12 @@ export class ActiveModal extends BaseNoteModal {
   }
 
   async onOpen() {
-    this.setupVaultListener(); 
-    if (this.remaining.length === 0 && this.failed.length > 0) {
-      this.showSummary(false);
+    if (this.remaining.length === 0) {
+      this.showSummary(this.failed.length === 0);
       return;
     }
     await this.render();
+    this.setupVaultListener();
   }
 
   private async render() {
@@ -128,13 +128,19 @@ export class ActiveModal extends BaseNoteModal {
     setIcon(deckBtn, "layers");
     deckBtn.setAttribute("aria-label", "Assign to decks");
     let deckDropdown: HTMLElement | null = null;
+    let deckOutsideHandler: ((e: MouseEvent) => void) | null = null;
     deckBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       if (deckDropdown && document.contains(deckDropdown)) {
         deckDropdown.remove();
         deckDropdown = null;
+        if (deckOutsideHandler) {
+          document.removeEventListener("mousedown", deckOutsideHandler);
+          deckOutsideHandler = null;
+        }
         return;
       }
+      // Read the note's current decks from the cache
       const noteFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
       const rawDecks = noteFile ? this.app.metadataCache.getFileCache(noteFile)?.frontmatter?.decks : undefined;
       const initialDecks: string[] = Array.isArray(rawDecks)
@@ -148,6 +154,7 @@ export class ActiveModal extends BaseNoteModal {
         await this.autoActivateNote();
       });
       deckDropdown = result.dropdown;
+      deckOutsideHandler = result.outsideHandler;
     });
 
     // Active checkbox (no label, larger)
@@ -308,6 +315,7 @@ export class ActiveModal extends BaseNoteModal {
   }
 
   onClose() {
+    this.teardownVaultListener();
     void this.saveTitle();
     void this.saveBodyEdits();
     this.cleanupEditors();

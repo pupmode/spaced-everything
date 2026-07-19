@@ -227,16 +227,22 @@
   border: 1px solid var(--background-modifier-border);  
   background: var(--background-secondary);  
   color: var(--text-normal);  
+  outline: 2px solid transparent;  
+  transition: filter 0.1s ease, outline-color 0.1s ease;  
+  filter: brightness(0.85); 
 }  
 
 .spaced-btn:hover {  
-  filter: brightness(0.75);  
-}  
-  
-.spaced-btn-interesting  { border-color: var(--color-green); }  
-.spaced-btn-not_interesting { border-color: var(--color-orange); }  
-.spaced-btn-route        { border-color: var(--color-blue); }  
-.spaced-btn-archive      { border-color: var(--color-red); }  
+  filter: brightness(1);  
+  outline-style: solid;
+  outline: 2px solid var(--reaction-color, transparent); 
+}
+
+.spaced-btn-archive:hover {  
+  filter: brightness(1);  
+  outline-style: solid;
+  outline: 2px solid var(--color-orange);  
+}
   
 .spaced-btn.spaced-btn-pass {  
   background-color: #509247 !important;  
@@ -481,12 +487,12 @@ button.mod-purple { background-color: var(--color-purple); color: var(--text-on-
 .spaced-active-progress-fail { background: var(--color-red); }  
   
 /* Reaction color segments */  
-.spaced-seg-purple { background: var(--color-purple); }  
-.spaced-seg-green  { background: var(--color-green); }  
-.spaced-seg-yellow { background: var(--color-yellow); }  
-.spaced-seg-orange { background: var(--color-orange); }  
-.spaced-seg-red    { background: var(--color-red); }  
-.spaced-seg-blue   { background: var(--color-blue); }  
+.spaced-seg-purple { background: var(--color-purple) !important; }  
+.spaced-seg-blue   { background: var(--color-blue) !important; }  
+.spaced-seg-green  { background: var(--color-green) !important; }  
+.spaced-seg-yellow { background: var(--color-yellow) !important; }  
+.spaced-seg-orange { background: var(--color-orange) !important; }  
+.spaced-seg-red    { background: var(--color-red) !important; }
 .spaced-seg-skip   { background: transparent; }  
   
 /* ── Bar Chart (stats) ──────────────────────────────────────────────────── */  
@@ -1011,4 +1017,145 @@ button.mod-purple { background-color: var(--color-purple); color: var(--text-on-
   resize: vertical;  
   box-sizing: border-box;  
   margin-bottom: 8px;  
+}
+
+/* ── Custom Reaction Set Modal ──────────────────────────────────────────── */  
+ 
+.spaced-reaction-panel {  
+  position: fixed;  
+  top: auto;  
+  left: auto;  
+  width: 480px;  
+  max-height: 480px;  
+  overflow-y: auto;  
+  border-radius: 8px;  
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);  
+  padding: 12px;  
+}  
+
+.spaced-reaction-list {  
+  display: flex;  
+  flex-direction: column;  
+  gap: 2px;  
+  margin-bottom: 8px;  
+}  
+  
+.spaced-reaction-item {  
+  display: flex;  
+  align-items: center;  
+  gap: 6px;  
+  padding: 4px 6px;  
+  border-radius: 4px;  
+  font-size: var(--font-ui-small);  
+  user-select: none;  
+}  
+  
+.spaced-reaction-item:hover {  
+  background: var(--background-modifier-hover);  
+}  
+  
+/* Ghost label input — looks like plain text until focused */  
+.spaced-reaction-label-input {  
+  flex: 1!important;  
+  min-width: 0!important;  
+  padding: 2px 4px!important;  
+  border: 1px solid transparent!important;  
+  border-radius: 4px!important;  
+  background: transparent!important;  
+  color: var(--text-normal)!important;  
+  font-size: var(--font-ui-small)!important;  
+}  
+  
+.spaced-reaction-label-input:hover,  
+.spaced-reaction-label-input:focus {  
+  border-color: var(--background-modifier-border)!important;  
+  background: var(--background-secondary)!important;  
+  outline: none!important;  
+}  
+  
+.spaced-reaction-meta {  
+  color: var(--text-muted)!important;  
+  font-size: var(--font-ui-smaller)!important;  
+  white-space: nowrap!important;  
+  width: 80px;
+  flex-shrink: 0;
+  text-align: left;
+}  
+  
+.spaced-reaction-inputs {  
+  display: flex!important;  
+  gap: 4px!important;  
+  align-items: center!important;  
+}  
+  
+.spaced-reaction-input {  
+  width: 64px!important;  
+  padding: 2px 6px!important;  
+  border: 1px solid var(--background-modifier-border)!important;  
+  border-radius: 4px!important;  
+  background: var(--background-secondary)!important;  
+  color: var(--text-normal)!important;  
+  font-size: var(--font-ui-small)!important;  
+}  
+  
+.spaced-reaction-add-row {  
+  display: flex!important;  
+  align-items: center!important;  
+  gap: 6px!important;  
+  padding: 6px 6px 2px!important;  
+  border-top: 1px solid var(--background-modifier-border)!important;  
+  margin-top: 4px!important;  
+}  
+  
+.spaced-reaction-add-input {  
+  flex: 1!important;  
+  padding: 4px 8px!important;  
+  border: 1px solid var(--background-modifier-border)!important;  
+  border-radius: 4px!important;  
+  background: var(--background-secondary)!important;  
+  color: var(--text-normal)!important;  
+  font-size: var(--font-ui-small)!important;  
+}
+
+/* Color swatch on each reaction row */  
+.spaced-reaction-swatch {  
+  width: 14px;  
+  height: 14px;  
+  border-radius: 50%;  
+  flex-shrink: 0;  
+  padding: 0;  
+  border: 2px solid transparent;  
+  cursor: pointer;  
+}  
+  
+.spaced-reaction-swatch:hover {  
+  border-color: var(--text-muted);  
+}  
+  
+/* Mini palette popover */  
+.spaced-color-palette {  
+  position: fixed;  
+  z-index: 300;  
+  display: flex;  
+  gap: 6px;  
+  padding: 6px 8px;  
+  background: var(--background-primary);  
+  border: 1px solid var(--background-modifier-border);  
+  border-radius: 6px;  
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);  
+}  
+  
+.spaced-color-dot {  
+  width: 16px;  
+  height: 16px;  
+  border-radius: 50%;  
+  padding: 0;  
+  border: 2px solid transparent;  
+  cursor: pointer;  
+  flex-shrink: 0;  
+}  
+  
+.spaced-color-dot:hover,  
+.spaced-color-dot--active {  
+  border-color: var(--text-normal);  
 }

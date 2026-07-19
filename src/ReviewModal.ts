@@ -219,13 +219,23 @@ export class ReviewModal extends BaseNoteModal {
 
   // reaction button row
   private renderButtons(contentEl: HTMLElement): void {
+    const COLOR_VAR_MAP: Record<string, string> = {
+      "spaced-seg-purple": "var(--color-purple)",
+      "spaced-seg-blue": "var(--color-blue)",
+      "spaced-seg-green": "var(--color-green)",
+      "spaced-seg-yellow": "var(--color-yellow)",
+      "spaced-seg-orange": "var(--color-orange)",
+      "spaced-seg-red": "var(--color-red)",
+    };
+
     const btnRow = contentEl.createDiv({ cls: "spaced-btn-row" });
     const reactions = getActiveReactions(this.plugin.settings);
     reactions.forEach((r, i) => {
       const btn = this.addBtn(btnRow, { label: r.label, cls: r.id, cb: () => this.react(r.id) });
-      if (i === 0) btn.setCta(); // first reaction gets CTA styling
-    });
-    this.addBtn(btnRow, { label: "Revisit soon", cls: "revisit", cb: () => this.react("revisit") });
+      if (i === 0) btn.setCta();
+      const colorVar = COLOR_VAR_MAP[this.reactionColor(r.id)];
+      if (colorVar) btn.buttonEl.style.setProperty("--reaction-color", colorVar);
+    });  
     const routeBtn = this.addBtn(btnRow, { label: "Route →", cls: "route", cb: () => this.routeNote() });
     routeBtn.setCta();
     this.addBtn(btnRow, { label: "Skip", cls: "skip", cb: () => this.react("skip") });
@@ -249,6 +259,7 @@ export class ReviewModal extends BaseNoteModal {
     if (opts.label) btn.setButtonText(opts.label);
     if (!opts.label && opts.icon) btn.setTooltip(opts.cls); // fallback tooltip for icon-only
 
+    btn.buttonEl.addClass("spaced-btn");
     btn.buttonEl.addClass(`spaced-btn-${opts.cls}`);
     if (opts.modifier) btn.buttonEl.addClass(`mod-${opts.modifier}`);
 
@@ -260,6 +271,7 @@ export class ReviewModal extends BaseNoteModal {
     await this.saveBodyEdits();
     this.progressLog.push(this.reactionColor(reaction));
     if (reaction === "skip") {
+       this.reviewedInSession.add(this.note.filepath); 
       await this.showNextNote();
       return;
     }
@@ -323,7 +335,6 @@ export class ReviewModal extends BaseNoteModal {
 
   private reactionColor(reaction: string): string {
     const systemColors: Record<string, string> = {
-      revisit: "spaced-seg-blue",
       route: "spaced-seg-blue",
       archive: "spaced-seg-yellow",
       delete: "spaced-seg-red",
@@ -331,9 +342,21 @@ export class ReviewModal extends BaseNoteModal {
     };
     if (systemColors[reaction]) return systemColors[reaction];
 
-    const ramp = ["spaced-seg-purple", "spaced-seg-green", "spaced-seg-yellow", "spaced-seg-orange", "spaced-seg-red"];
     const reactions = getActiveReactions(this.plugin.settings);
-    const idx = reactions.findIndex((r) => r.id === reaction);
+    const reactionDef = reactions.find((r) => r.id === reaction);
+
+    // ← check custom color override before falling through to the ramp
+    if (reactionDef?.color) return reactionDef.color;
+
+    const ramp = [
+      "spaced-seg-purple",
+      "spaced-seg-blue",
+      "spaced-seg-green",
+      "spaced-seg-yellow",
+      "spaced-seg-orange",
+      "spaced-seg-red",
+    ];
+    const idx = reactionDef ? reactions.indexOf(reactionDef) : -1;
     if (idx === -1) return "";
     const t = reactions.length === 1 ? 0.5 : idx / (reactions.length - 1);
     return ramp[Math.round(t * (ramp.length - 1))];
@@ -356,6 +379,7 @@ export class ReviewModal extends BaseNoteModal {
   onClose() {
     void this.saveTitle();
     void this.saveBodyEdits();
+        this.teardownVaultListener();
     if (this.sessionSize > 0) {
       if (this.reviewedInSession.size < this.sessionSize) {
         this.plugin.data.srsSession = {

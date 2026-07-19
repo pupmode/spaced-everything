@@ -10,6 +10,7 @@ import { SpacedEverythingSettings, DEFAULT_SETTINGS, PluginData, NoteRecord } fr
 import { getNotesFromVault, writeFrontmatterActive } from "./frontmatter";
 import { pickNoteToReview, noteIsDue } from "./scheduler";
 import { today } from "./utils";
+import { TestModal } from "./testmodal";
 
 export default class SpacedEverythingPlugin extends Plugin {
   settings: SpacedEverythingSettings;
@@ -136,13 +137,13 @@ export default class SpacedEverythingPlugin extends Plugin {
       }),
     );
 
-     /* Iterate all markdown files in the vault
+    /* Iterate all markdown files in the vault
 For each file, read frontmatter.decks from metadataCache
 Check if it's an array with any duplicates (i.e., new Set(decks).size < decks.length)
 If so, call writeFrontmatterDecks(this.app, file.path, [...new Set(decks)])
 Show a Notice reporting how many files were fixed
 
-
+https://deepwiki.com/search/sometimes-i-have-a-problem-whe_b957aec4-c8f6-4a07-a9ea-5b4c84e7b320
     this.addCommand({
       id: "check-deck-dupes",
       name: "Check deck duplicates",

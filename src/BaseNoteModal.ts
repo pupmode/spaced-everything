@@ -1,4 +1,4 @@
-import { App, Modal, TFile, Component, MarkdownRenderer, WorkspaceLeaf } from "obsidian";
+import { App, Modal, TFile, Component, MarkdownRenderer, EventRef } from "obsidian";
 import { NoteRecord } from "./types";
 import type SpacedEverythingPlugin from "./main";
 import { writeFrontmatterActive, stripFrontmatter } from "./frontmatter";
@@ -29,14 +29,21 @@ export abstract class BaseNoteModal extends Modal {
 
   // ── Shared methods ─────────────────────────────────────────────────────────
 
+  private _vaultModifyRef: EventRef | null = null;
+
   protected setupVaultListener(): void {
-    this.registerEvent(
-      this.app.vault.on("modify", (file) => {
-        if (file.path === this.note.filepath && !this.isEditing) {
-          void this.refreshContent();
-        }
-      }),
-    );
+    this._vaultModifyRef = this.app.vault.on("modify", (file) => {
+      if (file.path === this.note.filepath && !this.isEditing) {
+        void this.refreshContent();
+      }
+    });
+  }
+
+  protected teardownVaultListener(): void {
+    if (this._vaultModifyRef) {
+      this.app.vault.offref(this._vaultModifyRef);
+      this._vaultModifyRef = null;
+    }
   }
 
   protected async refreshContent(): Promise<void> {
@@ -51,7 +58,7 @@ export abstract class BaseNoteModal extends Modal {
     this.renderComponent.load();
     await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
   }
-  
+
   protected async saveBodyEdits(): Promise<void> {
     if (!this.isEditing || !this.tiptapEditor) return;
     const newBody = extractMarkdown(this.tiptapEditor);

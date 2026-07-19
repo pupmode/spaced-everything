@@ -37,17 +37,24 @@ function reactionT(id: string, reactions: ReactionDefinition[]): number {
 export function nextInterval(note: NoteRecord, reaction: string, reactions: ReactionDefinition[]): number {
   const { interval, easeFactor } = note;
   if (reaction === "skip") return interval;
-  if (reaction === "revisit") {
-    return Math.max(1, Math.floor(interval * 0.9)); // no easeFactor — matches again_interval()
+  const reactionDef = reactions.find((r) => r.id === reaction);
+  if (reactionDef?.manualOverride && reactionDef.intervalMult !== undefined) {
+    return Math.min(MAX_INTERVAL, Math.max(1, Math.floor((interval * easeFactor * reactionDef.intervalMult) / 100)));
   }
-  const t = reactionT(reaction, reactions);
+  const autoReactions = reactions.filter((r) => !r.manualOverride);
+  const t = reactionT(reaction, autoReactions);
   const m = lerp(0.83, 1.5, t);
   return Math.min(MAX_INTERVAL, Math.max(1, Math.floor((interval * easeFactor * m) / 100)));
 }
 
 export function nextEaseFactor(note: NoteRecord, reaction: string, reactions: ReactionDefinition[]): number {
-  if (reaction === "skip" || reaction === "revisit") return note.easeFactor;
-  const t = reactionT(reaction, reactions);
+ if (reaction === "skip") return note.easeFactor;
+  const reactionDef = reactions.find((r) => r.id === reaction);
+  if (reactionDef?.manualOverride && reactionDef.easeDelta !== undefined) {
+    return Math.min(MAX_EASE, Math.max(130, note.easeFactor + reactionDef.easeDelta));
+  }
+  const autoReactions = reactions.filter((r) => !r.manualOverride);
+  const t = reactionT(reaction, autoReactions);
   const delta = Math.round(lerp(20, -20, t));
   return Math.min(MAX_EASE, Math.max(130, note.easeFactor + delta));
 }
@@ -68,7 +75,6 @@ export function weightedRandom<T>(candidates: T[], weights: number[]): T | null 
   return candidates[candidates.length - 1];
 }
 
-// Port of pick_note_to_review()
 export function pickNoteToReview(notes: NoteRecord[], settings: SpacedEverythingSettings): NoteRecord | null {
   const rand = Math.random();
 
@@ -76,28 +82,19 @@ export function pickNoteToReview(notes: NoteRecord[], settings: SpacedEverything
   if (rand < settings.recentUndueThreshold) {
     const recentUnreviewed = notes.filter((n) => {
       const age = daysBetween(n.createdOn, today());
-      return n.interval >= 0 && n.noteState === "normal" && age >= 50 && age <= 100 && n.reviewedCount === 0;
+      return n.interval >= 0 && n.noteState === "normal" && age <= 50 && n.reviewedCount === 0;
     });
     if (recentUnreviewed.length) {
       return recentUnreviewed[Math.floor(Math.random() * recentUnreviewed.length)];
     }
   }
 
-  // Always prioritize "revisit" notes (user explicitly flagged to see soon)
-  const revisitDue = notes.filter((n) => noteIsDue(n) && n.noteState === "revisit");
-  if (revisitDue.length) {
-    const weights = revisitDue.map(
-      (n) => Math.pow(Math.max(1, numDaysOverdue(n)), 2) * folderWeight(n.filepath, settings),
-    );
-    const picked = weightedRandom(revisitDue, weights);
-    if (picked) return picked;
-  }
-
   const reactions = getActiveReactions(settings);
 
-  // 20% chance: exciting note (weighted by overdue²)
+  // 20% chance: first-reaction (most positive) notes (weighted by overdue²)
   if (rand < settings.excitingThreshold) {
-    const exciting = notes.filter((n) => noteIsDue(n) && n.noteState === "exciting");
+    const excitingId = reactions[0]?.id ?? "exciting";
+    const exciting = notes.filter((n) => noteIsDue(n) && n.noteState === excitingId);
     const weights = exciting.map(
       (n) => Math.pow(Math.max(1, numDaysOverdue(n)), 2) * folderWeight(n.filepath, settings),
     );
@@ -109,7 +106,7 @@ export function pickNoteToReview(notes: NoteRecord[], settings: SpacedEverything
   const allDue = notes.filter((n) => noteIsDue(n));
   const weights = allDue.map((n) => {
     let sw: number;
-    if (n.noteState === "normal" || n.noteState === "revisit") {
+    if (n.noteState === "normal") {
       sw = 1.0;
     } else {
       const t = reactionT(n.noteState, reactions);

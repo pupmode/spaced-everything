@@ -305,7 +305,7 @@ export class StatsView extends ItemView {
     const labelH = 24;
     const selH = selEl.offsetHeight + 6;
     const chartH = Math.max((container.clientHeight || 200) - labelH - selH - 10, 100);
-    const totalH = chartH + labelH;
+    const totalH = chartH + labelH + 20;
     const yAxisW = 34;
     const totalW = Math.max((container.clientWidth || 300) - yAxisW - 8, 60);
     const dataMax = Math.max(...data.map((d) => d.value), 1);
@@ -478,6 +478,7 @@ export class StatsView extends ItemView {
     totalH: number,
     totalW: number,
     yScale: ScaleLinear<number, number>,
+    todayStr?: string,
   ): void {
     const xScale = scaleBand<string>()
       .domain(data.map((d) => d.date))
@@ -562,11 +563,28 @@ export class StatsView extends ItemView {
       .join("text")
       .attr("class", "x-label")
       .attr("x", (d) => (xScale(d.date) ?? 0) + barW / 2)
-      .attr("y", totalH - 2)
+      .attr("y", totalH - 18)
       .attr("text-anchor", "middle")
       .attr("font-size", 16)
       .attr("fill", "var(--text-muted)")
       .text((d) => fmt(new Date(d.date)));
+
+    // Today circle marker — only when called from the forecast chart
+    if (todayStr && labelDates.some((d) => d.date === todayStr)) {
+      const tx = (xScale(todayStr) ?? 0) + barW / 2;
+      // font-size is 16, baseline at totalH-2, so center ≈ totalH-10
+      svgSel
+        .insert("circle", "text.x-label") // inserts before text, so circle is behind
+        .attr("cx", tx)
+        .attr("cy", totalH - 24)
+        .attr("r", 10)
+        .attr("fill", "var(--text-muted)");
+      svgSel
+        .selectAll<SVGTextElement, { date: string; value: number }>("text.x-label")
+        .filter((d) => d.date === todayStr)
+        .attr("fill", "var(--background-primary)")
+        .attr("font-size", "16px")
+    }
   }
 
   private createNavRow(container: HTMLElement, label: string, onPrev: () => void, onNext: () => void): void {
@@ -723,7 +741,7 @@ export class StatsView extends ItemView {
     const { svg, chartH, totalH, totalW, yScale } = this.buildChartScaffold(container, data, selEl);
 
     if (showBars) {
-      this.renderBarContent(svg, data, period, chartH, totalH, totalW, yScale);
+      this.renderBarContent(svg, data, period, chartH, totalH, totalW, yScale, today());
     } else {
       this.renderLineContent(svg, data, period, chartH, totalH, totalW, yScale);
     }
@@ -748,6 +766,7 @@ export class StatsView extends ItemView {
     }
 
     const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const maxDue = Math.max(...Array.from(upcomingDue.values()), 1);
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
       const dueCount = upcomingDue.get(dateStr) ?? 0;
@@ -762,6 +781,10 @@ export class StatsView extends ItemView {
         .filter(Boolean)
         .join(" ");
       const cell = grid.createDiv({ cls });
+      if (isFuture && dueCount > 0) {
+        const pct = Math.round(10 + (dueCount / maxDue) * 60); // 10% → 90%
+        cell.style.background = `color-mix(in srgb, var(--interactive-accent) ${pct}%, transparent)`;
+      }
       cell.createSpan({ text: String(d), cls: "se-month-day-num" });
       if (reviewCount > 0) {
         cell.dataset.tooltip = `${reviewCount} review${reviewCount !== 1 ? "s" : ""}`;
