@@ -26,12 +26,17 @@ export class DeckPickerModal extends Modal {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
       if (!fm?.active) continue;
 
-      const decks: string[] = Array.isArray(fm.decks) && fm.decks.length > 0 ? fm.decks : ["default"];
-      const record: NoteRecord = readNoteRecord(this.plugin, file);
-
-      for (const deck of decks) {
-        if (!deckMap.has(deck)) deckMap.set(deck, []);
-        deckMap.get(deck)!.push(record);
+            const record: NoteRecord = readNoteRecord(this.plugin, file);  
+  
+      // "default" always gets every active note  
+      if (!deckMap.has("default")) deckMap.set("default", []);  
+      deckMap.get("default")!.push(record);  
+  
+      // also add to any named decks the note belongs to  
+      const namedDecks: string[] = Array.isArray(fm.decks) ? fm.decks.filter((d: string) => d !== "default") : [];  
+      for (const deck of namedDecks) {  
+        if (!deckMap.has(deck)) deckMap.set(deck, []);  
+        deckMap.get(deck)!.push(record);  
       }
     }
 

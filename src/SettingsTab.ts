@@ -477,7 +477,7 @@ class CustomReactionSetModal extends Modal {
           delete reactions[i].intervalMult;
           delete reactions[i].easeDelta;
         } else {
-          reactions[i          reactions[i].intervalMult = parseFloat((tFull <= 0.5 ? 0.5 + 0.5 * (tFull * 2) : 1.0 + 2.0 * ((tFull - 0.5) * 2)).toFixed(2));].intervalMult = parseFloat((0.83 + (1.5 - 0.83) * tFull).toFixed(2));
+          reactions[i].intervalMult = parseFloat((tFull <= 0.5 ? 0.5 + 0.5 * (tFull * 2) : 1.0 + 2.0 * ((tFull - 0.5) * 2)).toFixed(2));
           reactions[i].easeDelta = Math.round(20 - 40 * tFull);
         }
         await this.plugin.saveSettings();

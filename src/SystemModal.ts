@@ -71,18 +71,11 @@ export class SystemModal extends BaseNoteModal {
     await this.renderNote(contentEl);
   }
 
-  protected async renderNote(contentEl: HTMLElement): Promise<void> {
-    this.cleanupEditors();
-    this.renderHeader(contentEl);
-
+  protected async renderExtraContent(contentEl: HTMLElement): Promise<void> {
     const leechCount = this.plugin.data.systemLeechCounts?.[this.note.filepath] ?? 0;
     if (leechCount >= SystemModal.LEECH_THRESHOLD) {
       this.renderLeechBanner(contentEl);
     }
-
-    await this.renderContent(contentEl);
-    this.renderButtons(contentEl);
-    this.renderProgressBar(contentEl);
   }
 
   protected getStatusText(): string {
@@ -493,7 +486,7 @@ export class SystemModal extends BaseNoteModal {
     const notes: ActionNote[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-      if (fm?.systemtype !== "action" || fm?.active !== true) continue;
+      if (fm?.active !== true) continue;
       notes.push({
         filepath: file.path,
         active: true,
@@ -526,14 +519,6 @@ export class SystemModal extends BaseNoteModal {
     this.remaining = sorted.filter((n) => !processed.has(n.filepath));
     this.currentRoundSize = this.remaining.length;
     return this.remaining.length > 0;
-  }
-
-  private getEmptyStateType(): "no-projects" | "no-actions" {
-    const hasActiveProjects = this.app.vault.getMarkdownFiles().some((f) => {
-      const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
-      return fm?.systemtype === "project" && fm?.active === true;
-    });
-    return hasActiveProjects ? "no-actions" : "no-projects";
   }
 
   // ── Session persistence ────────────────────────────────────────────────────

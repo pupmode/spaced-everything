@@ -39,11 +39,14 @@ export abstract class BaseNoteModal extends Modal {
   protected async renderNote(contentEl: HTMLElement): Promise<void> {
     this.cleanupEditors();
     this.renderHeader(contentEl);
+    await this.renderExtraContent(contentEl);
     await this.renderContent(contentEl);
     const footer = contentEl.createDiv({ cls: "spaced-sticky-footer" });
     this.renderButtons(footer);
     this.renderProgressBar(footer);
   }
+
+  protected async renderExtraContent(contentEl: HTMLElement): Promise<void> {}
 
   protected abstract getStatusText(): string;
   protected onRestartClick(): void {}
@@ -96,6 +99,7 @@ export abstract class BaseNoteModal extends Modal {
     this.metadataEditor.synchronize(fm);
 
     container.appendChild(this.metadataEditor.containerEl);
+    setTimeout(() => this.applyIconicPropertyIcons(), 0);
   }
 
   protected renderHeader(contentEl: HTMLElement): void {
@@ -267,8 +271,31 @@ export abstract class BaseNoteModal extends Modal {
     return cls ?? null;
   }
 
+  private applyIconicPropertyIcons(): void {  
+  if (!this.metadataEditor?.containerEl) return;  
+  const propertyIcons: Record<string, { icon?: string; color?: string }> =  
+    (this.app as any).plugins?.plugins?.['iconic']?.settings?.propertyIcons ?? {};  
+  if (!Object.keys(propertyIcons).length) return;  
+  
+  const propEls = this.metadataEditor.containerEl.findAll('.metadata-property');  
+  for (const propEl of propEls) {  
+    const key = (propEl as HTMLElement).dataset.propertyKey?.toLowerCase();  
+    if (!key) continue;  
+    const entry = propertyIcons[key];  
+    if (!entry?.icon) continue;  
+    const iconEl = propEl.find('.metadata-property-icon') as HTMLElement | null;  
+    if (!iconEl) continue;  
+    setIcon(iconEl, entry.icon);  
+    const svgEl = iconEl.find('.svg-icon') as HTMLElement | null;  
+    if (svgEl && entry.color) {  
+      svgEl.style.setProperty('color', entry.color);  
+    }  
+  }  
+}
+
   protected async refreshContent(): Promise<void> {
     if (this.isEditing || !this.renderedContainer) return;
+    if (this.renderedContainer.contains(document.activeElement)) return;  
     const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
     if (!file) return;
     const raw = await this.app.vault.read(file);
