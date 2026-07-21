@@ -1,12 +1,9 @@
-import { App, Component, Modal, MarkdownRenderer, TFile, setIcon } from "obsidian";
+import { App, TFile } from "obsidian";
 import { NoteRecord } from "./types";
 import type SpacedEverythingPlugin from "./main";
 import { saveStore } from "./store";
-import { writeFrontmatterActive, writeFrontmatterDecks, stripFrontmatter } from "./frontmatter";
-import { createTiptapEditor, extractMarkdown } from "./tiptap-editor";
-import { QuickNoteModal } from "./QuickNoteModal";
-import { createDeckDropdown } from "./deckDropdown";
 import { BaseNoteModal } from "./BaseNoteModal";
+import { shuffleArray, getActiveNotes } from "./utils";
 
 export class ActiveModal extends BaseNoteModal {
   private remaining: NoteRecord[];
@@ -21,12 +18,22 @@ export class ActiveModal extends BaseNoteModal {
     app: App,
     protected plugin: SpacedEverythingPlugin,
     notes: NoteRecord[],
-    private deckName: string = "default",
+    deckName: string = "default",
   ) {
     super(app);
+    this.deckName = deckName;
     this.allNotes = [...notes];
     this.remaining = [...notes];
     this.currentRoundSize = notes.length;
+  }
+  protected showRestartButton = true;
+
+  protected onRestartClick(): void {
+    void this.restartSession(this.allNotes);
+  }
+
+  protected getStatusText(): string {
+    return `${this.remaining.length} remaining · ${this.failed.length} to retry`;
   }
 
   public resumeSession(state: {
@@ -58,173 +65,33 @@ export class ActiveModal extends BaseNoteModal {
     const { contentEl } = this;
     contentEl.empty();
     this.note = this.remaining[0];
-    const note = this.note;
-
-    this.cleanupEditors();
-    this.renderComponent = new Component();
-    this.renderComponent.load();
-
-    // Title row: title (left) + controls (right)
-    const headerRow = contentEl.createDiv({ cls: "spaced-header-row" });
-
-    // Title (clickable to open note)
-    const title = note.filepath.split("/").pop()!.replace(/\.md$/, "");
-    this.titleEl = headerRow.createEl("h1", { text: title, cls: "spaced-note-title" });
-    this.originalTitle = title;
-    this.titleEl.spellcheck = false;
-
-    if (this.isEditing) {
-      this.titleEl.contentEditable = "true";
-      this.titleEl.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          this.titleEl!.blur();
-        }
-        if (e.key === "Escape") {
-          this.titleEl!.textContent = this.originalTitle;
-          this.titleEl!.blur();
-        }
-      });
-      this.titleEl.addEventListener("blur", () => this.saveTitle());
-    } else {
-      this.titleEl.style.cursor = "pointer";
-      this.titleEl.addEventListener("click", async () => {
-        const file = this.app.vault.getAbstractFileByPath(note.filepath) as TFile;
-        if (!file) return;
-        await this.app.workspace.getLeaf(false).openFile(file);
-      });
-    }
-
-    // Right: controls
-    const headerRight = headerRow.createDiv({ cls: "spaced-header-right" });
-
-    // Restart session button
-    const restartBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
-    setIcon(restartBtn, "rotate-ccw");
-    restartBtn.setAttribute("aria-label", "Restart session");
-    restartBtn.addEventListener("click", () => this.restartSession(this.allNotes));
-
-    // Edit button
-    const editBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
-    setIcon(editBtn, this.isEditing ? "eye" : "pencil");
-    editBtn.setAttribute("aria-label", this.isEditing ? "Switch to read view" : "Switch to edit view");
-    editBtn.addEventListener("click", async () => {
-      await this.saveTitle();
-      await this.saveBodyEdits();
-      this.isEditing = !this.isEditing;
-      await this.render();
+    await this.renderNote(contentEl);
+  }
+  protected renderButtons(container: HTMLElement): void {
+    const btnRow = container.createDiv({ cls: "spaced-btn-row" });
+    this.addBtn(btnRow, { label: "Not now/Pass", cls: "pass", cb: () => this.respond("pass") });
+    this.addBtn(btnRow, { label: "Retry", cls: "fail", cb: () => this.respond("fail") });
+    this.addBtn(btnRow, {
+      icon: "shuffle",
+      cls: "icon",
+      tooltip: "Shuffle remaining cards",
+      cb: async () => {
+        this.remaining = shuffleArray(this.remaining);
+        await this.render();
+      },
     });
-
-    // New note button
-    const newNoteBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
-    setIcon(newNoteBtn, "file-plus");
-    newNoteBtn.setAttribute("aria-label", "New note");
-    newNoteBtn.addEventListener("click", () => {
-      new QuickNoteModal(this.app, this.plugin, this.deckName).open();
-    });
-    // Deck picker button
-    const deckWrapper = headerRight.createDiv({ cls: "spaced-deck-wrapper" });
-    const deckBtn = deckWrapper.createDiv({ cls: "spaced-deck-btn" });
-    setIcon(deckBtn, "layers");
-    deckBtn.setAttribute("aria-label", "Assign to decks");
-    let deckDropdown: HTMLElement | null = null;
-    let deckOutsideHandler: ((e: MouseEvent) => void) | null = null;
-    deckBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (deckDropdown && document.contains(deckDropdown)) {
-        deckDropdown.remove();
-        deckDropdown = null;
-        if (deckOutsideHandler) {
-          document.removeEventListener("mousedown", deckOutsideHandler);
-          deckOutsideHandler = null;
-        }
-        return;
-      }
-      // Read the note's current decks from the cache
-      const noteFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
-      const rawDecks = noteFile ? this.app.metadataCache.getFileCache(noteFile)?.frontmatter?.decks : undefined;
-      const initialDecks: string[] = Array.isArray(rawDecks)
-        ? [...rawDecks]
-        : typeof rawDecks === "string" && rawDecks
-          ? [rawDecks]
-          : [];
-
-      const result = createDeckDropdown(this.app, deckWrapper, initialDecks, async (decks) => {
-        await writeFrontmatterDecks(this.app, this.note.filepath, decks);
-        await this.autoActivateNote();
-      });
-      deckDropdown = result.dropdown;
-      deckOutsideHandler = result.outsideHandler;
-    });
-
-    // Active checkbox (no label, larger)
-    const activeCheckbox = headerRight.createEl("input", { cls: "spaced-active-checkbox" });
-    activeCheckbox.type = "checkbox";
-    const noteFileForActive = this.app.vault.getAbstractFileByPath(note.filepath) as TFile | null;
-    activeCheckbox.checked = noteFileForActive
-      ? this.app.metadataCache.getFileCache(noteFileForActive)?.frontmatter?.active === true
-      : false;
-    activeCheckbox.setAttribute("aria-label", "Add to active deck");
-    activeCheckbox.addEventListener("change", async () => {
-      const newActive = activeCheckbox.checked;
-      this.note = { ...this.note, active: newActive };
-      await writeFrontmatterActive(this.app, this.note.filepath, newActive);
-    });
-
-    // Counter
-    contentEl.createEl("div", {
-      text: `${this.remaining.length} remaining · ${this.failed.length} to retry`,
-      cls: "spaced-due-count",
-    });
-
-    // Note content
-    const file = this.app.vault.getAbstractFileByPath(note.filepath) as TFile;
-    if (!file) {
-      contentEl.createEl("p", { text: `File not found: ${note.filepath}` });
-    } else {
-      const raw = await this.app.vault.read(file);
-      const { body } = stripFrontmatter(raw);
-      this.renderedContainer = contentEl.createDiv({ cls: "spaced-note-content spaced-note-rendered" });
-      this.tiptapContainer = contentEl.createDiv({ cls: "spaced-note-content" });
-      if (this.isEditing) {
-        this.renderedContainer.style.display = "none";
-        this.tiptapEditor = createTiptapEditor(this.tiptapContainer, body);
-      } else {
-        this.tiptapContainer.style.display = "none";
-        await MarkdownRenderer.render(this.app, body, this.renderedContainer, note.filepath, this.renderComponent!);
-      }
-    }
-
-    // Pass / Fail buttons
-    const btnRow = contentEl.createDiv({ cls: "spaced-btn-row" });
-    const passBtn = btnRow.createEl("button", { text: "Not now/Pass", cls: "spaced-btn spaced-btn-pass" });
-    const failBtn = btnRow.createEl("button", { text: "Retry", cls: "spaced-btn spaced-btn-fail" });
-    const shuffleBtn = btnRow.createEl("button", { cls: "spaced-btn spaced-btn-icon" });
-    setIcon(shuffleBtn, "shuffle");
-    const routeBtn = btnRow.createEl("button", { cls: "spaced-btn spaced-btn-route" });
-    setIcon(routeBtn, "route");
-    shuffleBtn.setAttribute("aria-label", "Shuffle remaining cards");
-    shuffleBtn.addEventListener("click", async () => {
-      this.remaining = this.shuffleArray(this.remaining);
-      await this.render();
-    });
-    routeBtn.addEventListener("click", () => this.routeNote());
-    routeBtn.setAttribute("aria-label", "Route →");
-    passBtn.addEventListener("click", () => this.respond("pass"));
-    failBtn.addEventListener("click", () => this.respond("fail"));
-
-    // Progress bar
-    this.renderProgressBar(contentEl);
+    this.addBtn(btnRow, { icon: "route", cls: "route", tooltip: "Route →", cb: () => this.routeNote() });
   }
 
-  private renderProgressBar(container: HTMLElement) {
-    const bar = container.createDiv({ cls: "spaced-active-progress-bar" });
+  protected getProgressSegments(): string[] {
+    const segments: string[] = [];
     for (let i = 0; i < this.currentRoundSize; i++) {
       const result = this.progressLog[i];
-      const seg = bar.createDiv({ cls: "spaced-active-progress-seg" });
-      if (result === "pass") seg.addClass("spaced-active-progress-pass");
-      else if (result === "fail") seg.addClass("spaced-active-progress-fail");
+      if (result === "pass") segments.push("spaced-progress-pass");
+      else if (result === "fail") segments.push("spaced-progress-fail");
+      else segments.push("");
     }
+    return segments;
   }
 
   private async respond(result: "pass" | "fail") {
@@ -263,12 +130,13 @@ export class ActiveModal extends BaseNoteModal {
       contentEl.createEl("p", { text: `Failed: ${this.failed.length}` });
     }
     const btnRow = contentEl.createDiv({ cls: "spaced-btn-row" });
-    const actionBtn = btnRow.createEl("button", {
-      text: isDone ? "Restart session" : "Next round",
-      cls: "mod-cta",
+    this.addBtn(btnRow, {
+      label: isDone ? "Restart session" : "Next round",
+      cls: "summary-action",
+      modifier: "cta",
+      cb: () => this.restartSession(isDone ? this.allNotes : this.failed),
     });
-    actionBtn.addEventListener("click", () => this.restartSession(isDone ? this.allNotes : this.failed));
-    btnRow.createEl("button", { text: "Close" }).addEventListener("click", () => this.close());
+    this.addBtn(btnRow, { label: "Close", cls: "summary-close", cb: () => this.close() });
   }
 
   private async clearSession() {
@@ -289,24 +157,8 @@ export class ActiveModal extends BaseNoteModal {
     await saveStore(this.plugin, this.plugin.data);
   }
 
-  private shuffleArray<T>(arr: T[]): T[] {
-    const a = [...arr];
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  }
-
-  private getActiveNotes(notes: NoteRecord[]): NoteRecord[] {
-    return notes.filter((n) => {
-      const f = this.app.vault.getAbstractFileByPath(n.filepath) as TFile | null;
-      return f ? this.app.metadataCache.getFileCache(f)?.frontmatter?.active === true : false;
-    });
-  }
-
   private async restartSession(sourceNotes: NoteRecord[]) {
-    this.remaining = this.getActiveNotes(sourceNotes);
+    this.remaining = getActiveNotes(this.app, sourceNotes);
     this.passed = [];
     this.failed = [];
     this.progressLog = [];
@@ -314,12 +166,7 @@ export class ActiveModal extends BaseNoteModal {
     await this.render();
   }
 
-  onClose() {
-    this.teardownVaultListener();
-    void this.saveTitle();
-    void this.saveBodyEdits();
-    this.cleanupEditors();
-    this.contentEl.empty();
+  protected onSessionClose(): void {
     if (this.remaining.length > 0 || this.failed.length > 0) {
       void this.saveSession();
     }

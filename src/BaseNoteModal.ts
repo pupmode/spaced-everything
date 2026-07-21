@@ -1,15 +1,15 @@
-import { App, Modal, TFile, Component, MarkdownRenderer, EventRef } from "obsidian";
-import { NoteRecord } from "./types";
+import { App, Modal, TFile, Component, MarkdownRenderer, EventRef, ButtonComponent, setIcon } from "obsidian";
+import { BaseNote } from "./types";
 import type SpacedEverythingPlugin from "./main";
-import { writeFrontmatterActive, stripFrontmatter } from "./frontmatter";
-import { extractMarkdown } from "./tiptap-editor";
+import { writeFrontmatterActive, writeFrontmatterDecks, stripFrontmatter } from "./frontmatter";
 import type { Editor } from "@tiptap/core";
 import { RouteFolderModal } from "./RouteFolderModal";
+import { createTiptapEditor, extractMarkdown } from "./tiptap-editor";
+import { QuickNoteModal } from "./QuickNoteModal";
+import { createDeckDropdown } from "./deckDropdown";
 
 export abstract class BaseNoteModal extends Modal {
   // ── Shared fields ──────────────────────────────────────────────────────────
-  // "protected" means: accessible in this class AND in subclasses,
-  // but not from outside code.
   protected tiptapEditor: Editor | null = null;
   protected renderComponent: Component | null = null;
   protected renderedContainer: HTMLElement | null = null;
@@ -17,18 +17,227 @@ export abstract class BaseNoteModal extends Modal {
   protected isEditing = false;
   protected titleEl: HTMLElement | null = null;
   protected originalTitle = "";
-
-  // These two must be set by the subclass constructor.
-  // The "!" tells TypeScript "I promise this will be assigned before use."
-  protected note!: NoteRecord;
-  protected abstract plugin: SpacedEverythingPlugin;
+  protected deckName = "";
+  protected showRestartButton = false;
+  protected progressBarEl: HTMLElement | null = null;
 
   constructor(app: App) {
     super(app);
   }
 
   // ── Shared methods ─────────────────────────────────────────────────────────
+  async onOpen() {
+    if (!this.shouldOpen()) return;
+    await this.renderModal();
+    this.setupVaultListener();
+  }
+  protected shouldOpen(): boolean {
+    return true;
+  }
+  protected abstract renderModal(): Promise<void>;
 
+  protected async renderNote(contentEl: HTMLElement): Promise<void> {
+    this.cleanupEditors();
+    this.renderHeader(contentEl);
+    await this.renderContent(contentEl);
+    const footer = contentEl.createDiv({ cls: "spaced-sticky-footer" });
+    this.renderButtons(footer);
+    this.renderProgressBar(footer);
+  }
+
+  protected abstract getStatusText(): string;
+  protected onRestartClick(): void {}
+  protected abstract getProgressSegments(): string[];
+  protected note!: BaseNote;
+  protected abstract plugin: SpacedEverythingPlugin;
+
+  protected renderProgressBar(container: HTMLElement): void {
+    this.progressBarEl = container.createDiv({ cls: "spaced-progress-bar" });
+    const segments = this.getProgressSegments();
+    for (const seg of segments) {
+      this.progressBarEl.createDiv({ cls: `spaced-progress-seg ${seg}`.trim() });
+    }
+  }
+
+  protected refreshProgressBar(): void {
+    if (!this.progressBarEl) return;
+    this.progressBarEl.empty();
+    const segments = this.getProgressSegments();
+    for (const seg of segments) {
+      this.progressBarEl.createDiv({ cls: `spaced-progress-seg ${seg}`.trim() });
+    }
+  }
+
+  private metadataEditor: any = null;
+
+  protected async renderFrontmatterEditor(container: HTMLElement, file: TFile): Promise<void> {
+    const MetadataEditorClass = this.getMetadataEditorClass();
+    console.log("MetadataEditorClass:", MetadataEditorClass);
+    if (!MetadataEditorClass) return;
+    console.log("metadataEditor instance:", this.metadataEditor);
+    console.log("containerEl:", this.metadataEditor?.containerEl);
+
+    const owner = {
+      getFile: () => file,
+      saveFrontmatter: async (fm: Record<string, unknown>) => {
+        await this.app.fileManager.processFrontMatter(file, (existing) => {
+          Object.assign(existing, fm);
+        });
+      },
+      getHoverSource: () => "preview",
+      getMode: () => "preview",
+    };
+
+    this.metadataEditor = new MetadataEditorClass(this.app, owner);
+    this.metadataEditor.load();
+
+    const rawFm = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+    const { position: _pos, ...fm } = rawFm;
+    this.metadataEditor.synchronize(fm);
+
+    container.appendChild(this.metadataEditor.containerEl);
+  }
+
+  protected renderHeader(contentEl: HTMLElement): void {
+    const title = this.note.filepath.split("/").pop()!.replace(/\.md$/, "");
+    const headerRow = contentEl.createDiv({ cls: "spaced-header-row" });
+    this.titleEl = headerRow.createEl("h1", { text: title, cls: "spaced-note-title" });
+    this.originalTitle = title;
+    this.titleEl.spellcheck = false;
+    this.titleEl.contentEditable = this.isEditing ? "true" : "false";
+
+    this.titleEl.addEventListener("blur", () => void this.saveTitle());
+
+    this.titleEl.addEventListener("click", () => {
+      if (this.isEditing) return;
+      const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+      if (file) void this.app.workspace.getLeaf(false).openFile(file);
+    });
+
+    this.titleEl.addEventListener("keydown", (e) => {
+      if (!this.isEditing) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.titleEl!.blur();
+      }
+      if (e.key === "Escape") {
+        this.titleEl!.textContent = this.originalTitle;
+        this.titleEl!.blur();
+      }
+    });
+
+    contentEl.createEl("div", { text: this.getStatusText(), cls: "spaced-due-count" });
+
+    const headerRight = headerRow.createDiv({ cls: "spaced-header-right" });
+
+    this.renderExtraHeaderButtons(headerRight);
+
+    if (this.showRestartButton) {
+      const restartBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
+      setIcon(restartBtn, "rotate-ccw");
+      restartBtn.setAttribute("aria-label", "Restart session");
+      restartBtn.addEventListener("click", () => this.onRestartClick());
+    }
+
+    // Edit button — inline toggle, no full re-render
+    const editBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
+    setIcon(editBtn, this.isEditing ? "eye" : "pencil");
+    editBtn.setAttribute("aria-label", this.isEditing ? "Switch to read view" : "Switch to edit view");
+    editBtn.addEventListener("click", async () => {
+      if (this.isEditing) {
+        await this.saveTitle();
+        await this.saveBodyEdits();
+        this.isEditing = false;
+        this.titleEl!.contentEditable = "false";
+        if (this.tiptapContainer) this.tiptapContainer.style.display = "none";
+        if (this.renderedContainer) {
+          this.renderedContainer.style.display = "";
+          this.renderedContainer.empty();
+          this.renderComponent?.unload();
+          this.renderComponent = null;
+          const updatedFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+          if (updatedFile) {
+            const updatedRaw = await this.app.vault.read(updatedFile);
+            const { body: updatedBody } = stripFrontmatter(updatedRaw);
+            this.renderComponent = new Component();
+            this.renderComponent.load();
+            await MarkdownRenderer.render(
+              this.app,
+              updatedBody,
+              this.renderedContainer,
+              this.note.filepath,
+              this.renderComponent,
+            );
+          }
+        }
+        this.metadataEditor?.containerEl.style.removeProperty("display");
+        setIcon(editBtn, "pencil");
+        editBtn.setAttribute("aria-label", "Switch to edit view");
+      } else {
+        this.isEditing = true;
+        this.titleEl!.contentEditable = "true";
+        this.titleEl!.focus();
+        if (this.renderedContainer) this.renderedContainer.style.display = "none";
+        if (this.tiptapContainer) this.tiptapContainer.style.display = "";
+        this.tiptapEditor?.commands.focus();
+        setIcon(editBtn, "eye");
+        this.metadataEditor?.containerEl.style.setProperty("display", "none");
+        editBtn.setAttribute("aria-label", "Switch to read view");
+      }
+    });
+
+    const newNoteBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
+    setIcon(newNoteBtn, "file-plus");
+    newNoteBtn.setAttribute("aria-label", "New note");
+    newNoteBtn.addEventListener("click", () => new QuickNoteModal(this.app, this.plugin, this.deckName).open());
+
+    const deckWrapper = headerRight.createDiv({ cls: "spaced-deck-wrapper" });
+    const deckBtn = deckWrapper.createDiv({ cls: "spaced-deck-btn" });
+    setIcon(deckBtn, "layers");
+    deckBtn.setAttribute("aria-label", "Assign to decks");
+    let deckDropdown: HTMLElement | null = null;
+    let deckOutsideHandler: ((e: MouseEvent) => void) | null = null;
+    deckBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (deckDropdown && document.contains(deckDropdown)) {
+        deckDropdown.remove();
+        deckDropdown = null;
+        if (deckOutsideHandler) {
+          document.removeEventListener("mousedown", deckOutsideHandler);
+          deckOutsideHandler = null;
+        }
+        return;
+      }
+      const noteFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+      const rawDecks = noteFile ? this.app.metadataCache.getFileCache(noteFile)?.frontmatter?.decks : undefined;
+      const initialDecks: string[] = Array.isArray(rawDecks)
+        ? [...rawDecks]
+        : typeof rawDecks === "string" && rawDecks
+          ? [rawDecks]
+          : [];
+      const result = createDeckDropdown(this.app, deckWrapper, initialDecks, async (decks) => {
+        await writeFrontmatterDecks(this.app, this.note.filepath, decks);
+        await this.autoActivateNote();
+      });
+      deckDropdown = result.dropdown;
+      deckOutsideHandler = result.outsideHandler;
+    });
+
+    const activeCheckbox = headerRight.createEl("input", { cls: "spaced-active-checkbox" });
+    activeCheckbox.type = "checkbox";
+    const noteFileForActive = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+    activeCheckbox.checked = noteFileForActive
+      ? this.app.metadataCache.getFileCache(noteFileForActive)?.frontmatter?.active === true
+      : false;
+    activeCheckbox.setAttribute("aria-label", "Add to active deck");
+    activeCheckbox.addEventListener("change", async () => {
+      const newActive = activeCheckbox.checked;
+      this.note = { ...this.note, active: newActive };
+      await writeFrontmatterActive(this.app, this.note.filepath, newActive);
+    });
+  }
+
+  protected renderExtraHeaderButtons(headerRight: HTMLElement): void {}
   private _vaultModifyRef: EventRef | null = null;
 
   protected setupVaultListener(): void {
@@ -44,6 +253,18 @@ export abstract class BaseNoteModal extends Modal {
       this.app.vault.offref(this._vaultModifyRef);
       this._vaultModifyRef = null;
     }
+  }
+
+  private static _MetadataEditorClass: any = null;
+
+  private getMetadataEditorClass(): any {
+    if (BaseNoteModal._MetadataEditorClass) return BaseNoteModal._MetadataEditorClass;
+    let cls: any = null;
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      if (!cls) cls = (leaf.view as any)?.metadataEditor?.constructor;
+    });
+    if (cls) BaseNoteModal._MetadataEditorClass = cls;
+    return cls ?? null;
   }
 
   protected async refreshContent(): Promise<void> {
@@ -104,5 +325,80 @@ export abstract class BaseNoteModal extends Modal {
     this.tiptapEditor = null;
     this.renderComponent?.unload();
     this.renderComponent = null;
+    this.metadataEditor?.unload();
+    this.metadataEditor = null;
+    this.renderedContainer = null;
+    this.tiptapContainer = null;
+  }
+
+  protected addBtn(
+    container: HTMLElement,
+    opts: {
+      label?: string;
+      icon?: string;
+      cls: string;
+      modifier?: string;
+      tooltip?: string;
+      cb: () => void;
+    },
+  ) {
+    const btn = new ButtonComponent(container).onClick(opts.cb);
+
+    if (opts.icon) btn.setIcon(opts.icon);
+    if (opts.label) btn.setButtonText(opts.label);
+    if (opts.tooltip) btn.setTooltip(opts.tooltip);
+    else if (!opts.label && opts.icon) btn.setTooltip(opts.cls);
+
+    btn.buttonEl.addClass("spaced-btn");
+    btn.buttonEl.addClass(`spaced-btn-${opts.cls}`);
+    if (opts.modifier) btn.buttonEl.addClass(`mod-${opts.modifier}`);
+
+    return btn;
+  }
+
+  protected async renderContent(contentEl: HTMLElement): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile;
+    if (!file) {
+      contentEl.createEl("p", { text: `File not found: ${this.note.filepath}` });
+      return;
+    }
+    const raw = await this.app.vault.read(file);
+    const { body } = stripFrontmatter(raw);
+    await this.renderFrontmatterEditor(contentEl, file);
+
+    // Read-only rendered view
+    this.renderedContainer = contentEl.createDiv({ cls: "spaced-note-content" });
+    this.renderComponent = new Component();
+    this.renderComponent.load();
+    await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
+
+    // Tiptap editor — always created, visibility controlled by isEditing
+    this.tiptapContainer = contentEl.createDiv({ cls: "spaced-tiptap-container" });
+    if (this.tiptapEditor) {
+      this.tiptapEditor.destroy();
+      this.tiptapEditor = null;
+    }
+    this.tiptapEditor = createTiptapEditor(this.tiptapContainer, body);
+
+    if (this.isEditing) {
+      this.renderedContainer.style.display = "none";
+      this.tiptapContainer.style.display = "";
+    } else {
+      this.renderedContainer.style.display = "";
+      this.tiptapContainer.style.display = "none";
+    }
+  }
+
+  protected onSessionClose(): void {}
+
+  protected abstract renderButtons(container: HTMLElement): void;
+
+  onClose() {
+    this.teardownVaultListener();
+    void this.saveTitle();
+    void this.saveBodyEdits();
+    this.onSessionClose();
+    this.cleanupEditors();
+    this.contentEl.empty();
   }
 }

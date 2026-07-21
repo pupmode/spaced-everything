@@ -27,12 +27,7 @@ export class DeckPickerModal extends Modal {
       if (!fm?.active) continue;
 
       const decks: string[] = Array.isArray(fm.decks) && fm.decks.length > 0 ? fm.decks : ["default"];
-      const record: NoteRecord = readNoteRecord(
-        this.app,
-        file,
-        this.plugin.settings.defaultEaseFactor,
-        this.plugin.settings.initialInterval,
-      );
+      const record: NoteRecord = readNoteRecord(this.plugin, file);
 
       for (const deck of decks) {
         if (!deckMap.has(deck)) deckMap.set(deck, []);

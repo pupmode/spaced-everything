@@ -129,7 +129,7 @@ export class StatsView extends ItemView {
 
     const history = this.plugin.data.reviewHistory;
     const todayStr = today();
-    const activeNotes = getNotesFromVault(this.app, this.plugin.settings).filter((n) => n.interval >= 0);
+    const activeNotes = getNotesFromVault(this.plugin).filter((n) => n.interval >= 0);
     const dueNotes = activeNotes.filter((n) => noteIsDue(n));
     const todayEvents = history.filter((e) => e.timestamp.startsWith(todayStr));
     const avgInterval =

@@ -35,7 +35,7 @@ export class DueNotesView extends ItemView {
     const { contentEl } = this;
     contentEl.empty();
 
-    const allNotes = getNotesFromVault(this.app, this.plugin.settings).filter((n) => n.interval >= 0);
+    const allNotes = getNotesFromVault(this.plugin).filter((n) => n.interval >= 0);
     const dueNotes = allNotes.filter((n) => noteIsDue(n)).sort((a, b) => numDaysOverdue(b) - numDaysOverdue(a));
 
     if (dueNotes.length === 0) {

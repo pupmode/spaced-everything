@@ -1,5 +1,5 @@
 import { App, Setting, Modal, Notice, TFolder } from "obsidian";
-import { NoteRecord } from "./types";
+import { BaseNote } from "./types";
 import type SpacedEverythingPlugin from "./main";
 import { saveStore } from "./store";
 
@@ -8,7 +8,7 @@ export class RouteFolderModal extends Modal {
 
   constructor(
     app: App,
-    private note: NoteRecord,
+    private note: BaseNote,
     private plugin: SpacedEverythingPlugin,
     private onMoved: (newPath: string) => void,
   ) {

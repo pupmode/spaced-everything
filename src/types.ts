@@ -1,15 +1,28 @@
 //← NoteRecord, PluginData, Settings interfaces
 
-export interface NoteRecord {
+export interface BaseNote {
   filepath: string;
+  active?: boolean;
+}  
+
+export interface NoteRecord extends BaseNote {
   easeFactor: number;
   interval: number;
   lastReviewedOn: string;
   createdOn: string;
   reviewedCount: number;
   noteState: NoteState;
-  active?: boolean;
   decks?: string[];
+}  
+
+export type EnergyColor = "🔥" | "🪔" | "🌊" | "🌿";  
+export type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
+
+export interface ActionNote extends BaseNote {
+  energy?: EnergyColor | EnergyColor[];
+  timeblock?: string | string[];
+  due?: string;
+  context?: string | string[];
 }
 
 export interface CustomReactionSet {
@@ -25,11 +38,21 @@ export interface CramSession {
   currentRoundSize: number;
 }
 
+export interface SystemSession {
+  remaining: string[];
+  failed: string[];
+  progressLog: ("pass" | "fail")[];
+  currentRoundSize: number;
+  energyLevel: "high" | "low";
+  activeTimeblocks: string[];
+  activeContexts: string[];
+}
+
 export interface ReactionDefinition {
   id: string; // stored in noteState frontmatter (e.g. "exciting", "my-custom")
   label: string; // shown on the button
   manualOverride?: boolean;
-  intervalMult?: number; // replaces the lerp'd multiplier (e.g. 1.2 = ×1.2)
+  intervalMult?: number; // direct multiplier: <1 shrinks (e.g. 0.5 = halve), >1 grows (e.g. 3.0 = triple)
   easeDelta?: number; // replaces the lerp'd delta (e.g. +10 or -15)
   color?: string;
 }
@@ -55,12 +78,24 @@ export interface SrsSession {
   sessionSize: number;
 }
 
+export interface SrsRecord {
+  easeFactor: number;
+  interval: number;
+  lastReviewedOn: string;
+  createdOn: string;
+  reviewedCount: number;
+  noteState: NoteState;
+}
+
 export interface PluginData {
   reviewLoadLog: Array<{ timestamp: string; numNotes: number; numDue: number }>;
   reviewHistory: ReviewEvent[];
   cramSessions?: Record<string, CramSession>;
   deckLastUsed?: Record<string, string>;
   srsSession?: SrsSession;
+  systemSession?: SystemSession;
+  systemLeechCounts?: Record<string, number>;
+  noteRecords: Record<string, SrsRecord>;
 }
 
 export interface SpacedEverythingSettings {
@@ -73,7 +108,9 @@ export interface SpacedEverythingSettings {
   recentUndueThreshold: number;
   excitingThreshold: number;
   reactionSetMode: ReactionSetMode;
+  weekendDays: DayName[];
   customReactionSets: CustomReactionSet[];
+  noteStateValues: string[];
 }
 
 export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
@@ -87,6 +124,8 @@ export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
   excitingThreshold: 0.7,
   reactionSetMode: "default",
   customReactionSets: [],
+  weekendDays: ["Sat", "Sun"],
+  noteStateValues: ["🌱", "🌿", "🌲"],
 };
 
 export const PRESET_DEFAULT: ReactionDefinition[] = [

@@ -1,7 +1,8 @@
 import { NoteRecord, ReactionDefinition, SpacedEverythingSettings, getActiveReactions } from "./types";
 import { today } from "./utils";
 
-const MAX_INTERVAL = 365; // days — prevents notes from disappearing for years
+const MAX_INTERVAL = 365; // days — prevents notes from disappearing for years  
+const MIN_INTERVAL = 1;   // days — floor for positive reactions  
 const MAX_EASE = 500; // percentage — prevents runaway acceleration
 
 function folderWeight(filepath: string, settings: SpacedEverythingSettings): number {
@@ -39,12 +40,21 @@ export function nextInterval(note: NoteRecord, reaction: string, reactions: Reac
   if (reaction === "skip") return interval;
   const reactionDef = reactions.find((r) => r.id === reaction);
   if (reactionDef?.manualOverride && reactionDef.intervalMult !== undefined) {
-    return Math.min(MAX_INTERVAL, Math.max(1, Math.floor((interval * easeFactor * reactionDef.intervalMult) / 100)));
+    return Math.min(MAX_INTERVAL, Math.max(MIN_INTERVAL, Math.floor(interval * reactionDef.intervalMult)));
   }
   const autoReactions = reactions.filter((r) => !r.manualOverride);
   const t = reactionT(reaction, autoReactions);
-  const m = lerp(0.83, 1.5, t);
-  return Math.min(MAX_INTERVAL, Math.max(1, Math.floor((interval * easeFactor * m) / 100)));
+  let m: number;
+  if (t <= 0.5) {
+    // Positive half: shrink interval, no easeFactor
+    // t=0 → ×0.5, t=0.5 → ×1.0
+    m = lerp(0.5, 1.0, t * 2);
+  } else {
+    // Negative half: grow interval using easeFactor
+    // t=0.5 → ×1.0, t=1 → ×(easeFactor/100)
+    m = lerp(1.0, easeFactor / 100, (t - 0.5) * 2);
+  }
+  return Math.min(MAX_INTERVAL, Math.max(MIN_INTERVAL, Math.floor(interval * m)));
 }
 
 export function nextEaseFactor(note: NoteRecord, reaction: string, reactions: ReactionDefinition[]): number {

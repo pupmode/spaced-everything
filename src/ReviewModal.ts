@@ -1,22 +1,12 @@
-import { App, ButtonComponent, TFile, setIcon, MarkdownRenderer, Component } from "obsidian";
+import { App, TFile, setIcon } from "obsidian";
 import { NoteRecord, ReviewEvent, SrsSession, getActiveReactions } from "./types";
 import { nextInterval, nextEaseFactor, noteIsDue, pickNoteToReview } from "./scheduler";
 import { today } from "./utils";
 import { saveStore } from "./store";
 import type SpacedEverythingPlugin from "./main";
-import {
-  writeNoteRecord,
-  writeFrontmatterActive,
-  writeFrontmatterDecks,
-  getNotesFromVault,
-  stripFrontmatter,
-} from "./frontmatter";
-import { createTiptapEditor, extractMarkdown } from "./tiptap-editor";
-import type { Editor } from "@tiptap/core";
-import { QuickNoteModal } from "./QuickNoteModal";
-import { RouteFolderModal } from "./RouteFolderModal";
-import { createDeckDropdown } from "./deckDropdown";
+import { writeNoteRecord, getNotesFromVault, writeFrontmatterState } from "./frontmatter";
 import { BaseNoteModal } from "./BaseNoteModal";
+import { MakeActionableModal } from "./MakeActionableModal";
 
 export class ReviewModal extends BaseNoteModal {
   private reviewStartTime = 0;
@@ -32,8 +22,16 @@ export class ReviewModal extends BaseNoteModal {
   }
 
   async onOpen() {
+    const allNotes = getNotesFromVault(this.plugin).filter((n) => n.interval >= 0);
+    this.sessionSize = allNotes.filter((n) => noteIsDue(n)).length;
     await this.render();
     this.setupVaultListener();
+  }
+
+  protected getStatusText(): string {
+    const allNotes = getNotesFromVault(this.plugin).filter((n) => n.interval >= 0);
+    const remainingDue = allNotes.filter((n) => noteIsDue(n) && !this.reviewedInSession.has(n.filepath)).length;
+    return `${remainingDue} note${remainingDue !== 1 ? "s" : ""} due`;
   }
 
   private async render() {
@@ -41,184 +39,58 @@ export class ReviewModal extends BaseNoteModal {
     this.isEditing = false;
     const { contentEl } = this;
     contentEl.empty();
-
-    this.renderHeader(contentEl);
-    await this.renderContent(contentEl);
-    this.renderButtons(contentEl);
-    this.renderProgressBar(contentEl);
+    await this.renderNote(contentEl);
   }
 
-  // — title, edit button, new note button, deck picker, active checkbox
-  private renderHeader(contentEl: HTMLElement): void {
-    const title = this.note.filepath.split("/").pop()!.replace(/\.md$/, "");
-    const headerRow = contentEl.createDiv({ cls: "spaced-header-row" });
-    this.titleEl = headerRow.createEl("h1", { text: title, cls: "spaced-note-title" });
-    this.originalTitle = title;
-    this.titleEl.spellcheck = false;
-    this.titleEl.addEventListener("blur", () => this.saveTitle());
+  protected renderExtraHeaderButtons(headerRight: HTMLElement): void {
+    // ── State badge ──────────────────────────────────────────────────────────
+    const stateOptions = this.plugin.settings.noteStateValues ?? ["🌱", "🌿", "🌲"];
 
-    // Non-edit mode: click opens the note
-    this.titleEl!.addEventListener("click", () => {
-      if (this.isEditing) return;
-      const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
-      if (file) this.app.workspace.getLeaf(false).openFile(file);
+    let currentState = this.app.metadataCache.getFileCache(
+      this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile,
+    )?.frontmatter?.state as string | undefined;
+
+    let stateDropdown: HTMLElement | null = null;
+
+    const badge = headerRight.createEl("span", {
+      text: currentState || "no state",
+      cls: "spaced-state-badge",
     });
+    badge.style.position = "relative";
+    badge.style.cursor = "pointer";
 
-    // Edit mode: Enter confirms, Escape cancels
-    this.titleEl!.addEventListener("keydown", (e) => {
-      if (!this.isEditing) return;
-      if (e.key === "Enter") {
-        e.preventDefault();
-        this.titleEl!.blur();
-      }
-      if (e.key === "Escape") {
-        this.titleEl!.textContent = title;
-        this.titleEl!.blur();
-      }
-    });
-
-    const allNotes = getNotesFromVault(this.app, this.plugin.settings).filter((n) => n.interval >= 0);
-    const totalDue = allNotes.filter((n) => noteIsDue(n)).length;
-    if (this.sessionSize === 0) this.sessionSize = totalDue;
-    const remainingDue = allNotes.filter((n) => noteIsDue(n) && !this.reviewedInSession.has(n.filepath)).length;
-    contentEl.createEl("div", {
-      text: `${remainingDue} note${remainingDue !== 1 ? "s" : ""} due`,
-      cls: "spaced-due-count",
-    });
-
-    const headerRight = headerRow.createDiv({ cls: "spaced-header-right" });
-
-    // Edit button
-    const editBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
-    setIcon(editBtn, "pencil");
-    editBtn.setAttribute("aria-label", "Switch to edit view");
-    editBtn.addEventListener("click", async () => {
-      if (this.isEditing) {
-        await this.saveTitle();
-        await this.saveBodyEdits();
-        this.isEditing = false;
-        this.titleEl!.contentEditable = "false";
-        if (this.tiptapContainer) this.tiptapContainer.style.display = "none";
-        if (this.renderedContainer) {
-          this.renderedContainer.style.display = "";
-          // Re-render with the saved content
-          this.renderedContainer.empty();
-          this.renderComponent?.unload();
-          this.renderComponent = null;
-          const updatedFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
-          if (updatedFile) {
-            const updatedRaw = await this.app.vault.read(updatedFile);
-            const { body: updatedBody } = stripFrontmatter(updatedRaw);
-            this.renderComponent = new Component();
-            this.renderComponent.load();
-            await MarkdownRenderer.render(
-              this.app,
-              updatedBody,
-              this.renderedContainer,
-              this.note.filepath,
-              this.renderComponent,
-            );
-          }
-        }
-        setIcon(editBtn, "pencil");
-        editBtn.setAttribute("aria-label", "Switch to edit view");
-      } else {
-        this.isEditing = true;
-        this.titleEl!.contentEditable = "true";
-        this.titleEl!.focus();
-        if (this.renderedContainer) this.renderedContainer.style.display = "none";
-        if (this.tiptapContainer) this.tiptapContainer.style.display = "";
-        this.tiptapEditor?.commands.focus();
-        setIcon(editBtn, "eye");
-        editBtn.setAttribute("aria-label", "Switch to read view");
-      }
-    });
-
-    // New note button
-    const newNoteBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
-    setIcon(newNoteBtn, "file-plus");
-    newNoteBtn.setAttribute("aria-label", "New note");
-    newNoteBtn.addEventListener("click", () => {
-      new QuickNoteModal(this.app, this.plugin).open();
-    });
-
-    // Deck picker button
-    const deckWrapper = headerRight.createDiv({ cls: "spaced-deck-wrapper" });
-    const deckBtn = deckWrapper.createDiv({ cls: "spaced-deck-btn" });
-    setIcon(deckBtn, "layers");
-    deckBtn.setAttribute("aria-label", "Assign to decks");
-    let deckDropdown: HTMLElement | null = null;
-    let deckOutsideHandler: ((e: MouseEvent) => void) | null = null;
-    deckBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (deckDropdown && document.contains(deckDropdown)) {
-        deckDropdown.remove();
-        deckDropdown = null;
-        if (deckOutsideHandler) {
-          document.removeEventListener("mousedown", deckOutsideHandler);
-          deckOutsideHandler = null;
-        }
+    badge.addEventListener("click", () => {
+      if (stateDropdown) {
+        stateDropdown.remove();
+        stateDropdown = null;
         return;
       }
-      // Read the note's current decks from the cache
-      const noteFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
-      const rawDecks = noteFile ? this.app.metadataCache.getFileCache(noteFile)?.frontmatter?.decks : undefined;
-      const initialDecks: string[] = Array.isArray(rawDecks)
-        ? [...rawDecks]
-        : typeof rawDecks === "string" && rawDecks
-          ? [rawDecks]
-          : [];
-
-      const result = createDeckDropdown(this.app, deckWrapper, initialDecks, async (decks) => {
-        await writeFrontmatterDecks(this.app, this.note.filepath, decks);
-        await this.autoActivateNote();
-      });
-      deckDropdown = result.dropdown;
-      deckOutsideHandler = result.outsideHandler;
+      stateDropdown = badge.createDiv({ cls: "spaced-state-dropdown" });
+      for (const state of stateOptions) {
+        const opt = stateDropdown.createDiv({ cls: "spaced-state-option" });
+        opt.setText(state);
+        if (state === currentState) opt.addClass("is-active");
+        opt.addEventListener("click", async () => {
+          await writeFrontmatterState(this.app, this.note.filepath, state);
+          currentState = state;
+          badge.setText(state);
+          stateDropdown?.remove();
+          stateDropdown = null;
+        });
+      }
     });
 
-    // Active checkbox (no label, larger)
-    const activeCheckbox = headerRight.createEl("input", { cls: "spaced-active-checkbox" });
-    activeCheckbox.type = "checkbox";
-    const noteFileForActive = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
-    activeCheckbox.checked = noteFileForActive
-      ? this.app.metadataCache.getFileCache(noteFileForActive)?.frontmatter?.active === true
-      : false;
-    activeCheckbox.setAttribute("aria-label", "Add to active deck");
-    activeCheckbox.addEventListener("change", async () => {
-      const newActive = activeCheckbox.checked;
-      this.note = { ...this.note, active: newActive };
-      await writeFrontmatterActive(this.app, this.note.filepath, newActive);
+    // ── Make Actionable button ───────────────────────────────────────────────
+    const mkaBtn = headerRight.createDiv({ cls: "spaced-hdr-btn" });
+    setIcon(mkaBtn, "zap");
+    mkaBtn.setAttribute("aria-label", "Make actionable");
+    mkaBtn.addEventListener("click", () => {
+      new MakeActionableModal(this.app, this.note.filepath, () => {}).open();
     });
-  }
-
-  // file reading, markdown render, tiptap editor
-  private async renderContent(contentEl: HTMLElement): Promise<void> {
-    const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile;
-    if (!file) {
-      contentEl.createEl("p", { text: `File not found: ${this.note.filepath}` });
-      return;
-    }
-    const raw = await this.app.vault.read(file);
-    const { body } = stripFrontmatter(raw);
-    // Read-only rendered view (default)
-    this.renderedContainer = contentEl.createDiv({ cls: "spaced-note-content" });
-    this.renderComponent = new Component();
-    this.renderComponent.load();
-    await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
-
-    // Tiptap editor (hidden until edit mode)
-    this.tiptapContainer = contentEl.createDiv({ cls: "spaced-tiptap-container" });
-    this.tiptapContainer.style.display = "none";
-    if (this.tiptapEditor) {
-      this.tiptapEditor.destroy();
-      this.tiptapEditor = null;
-    }
-    this.tiptapEditor = createTiptapEditor(this.tiptapContainer, body);
   }
 
   // reaction button row
-  private renderButtons(contentEl: HTMLElement): void {
+  protected renderButtons(contentEl: HTMLElement): void {
     const COLOR_VAR_MAP: Record<string, string> = {
       "spaced-seg-purple": "var(--color-purple)",
       "spaced-seg-blue": "var(--color-blue)",
@@ -231,39 +103,25 @@ export class ReviewModal extends BaseNoteModal {
     const btnRow = contentEl.createDiv({ cls: "spaced-btn-row" });
     const reactions = getActiveReactions(this.plugin.settings);
     reactions.forEach((r, i) => {
-      const btn = this.addBtn(btnRow, { label: r.label, cls: r.id, cb: () => this.react(r.id) });
+      const wrapper = btnRow.createDiv({ cls: "spaced-btn-wrapper" });
+      const btn = this.addBtn(wrapper, { label: r.label, cls: r.id, cb: () => this.react(r.id) });
       if (i === 0) btn.setCta();
       const colorVar = COLOR_VAR_MAP[this.reactionColor(r.id)];
       if (colorVar) btn.buttonEl.style.setProperty("--reaction-color", colorVar);
-    });  
+
+      const days = nextInterval(this.note, r.id, reactions);
+      wrapper.createEl("span", {
+        text: formatInterval(days),
+        cls: "spaced-btn-interval",
+      });
+    });
     const routeBtn = this.addBtn(btnRow, { label: "Route →", cls: "route", cb: () => this.routeNote() });
     routeBtn.setCta();
     this.addBtn(btnRow, { label: "Skip", cls: "skip", cb: () => this.react("skip") });
     this.addBtn(btnRow, { label: "Archive", cls: "archive", cb: () => this.archiveNote() });
     this.addBtn(btnRow, { icon: "trash-2", cls: "delete", cb: () => this.deleteNote() });
-  }
 
-  private addBtn(
-    container: HTMLElement,
-    opts: {
-      label?: string;
-      icon?: string;
-      cls: string;
-      modifier?: string;
-      cb: () => void;
-    },
-  ) {
-    const btn = new ButtonComponent(container).onClick(opts.cb);
-
-    if (opts.icon) btn.setIcon(opts.icon);
-    if (opts.label) btn.setButtonText(opts.label);
-    if (!opts.label && opts.icon) btn.setTooltip(opts.cls); // fallback tooltip for icon-only
-
-    btn.buttonEl.addClass("spaced-btn");
-    btn.buttonEl.addClass(`spaced-btn-${opts.cls}`);
-    if (opts.modifier) btn.buttonEl.addClass(`mod-${opts.modifier}`);
-
-    return btn;
+    
   }
 
   private async react(reaction: string) {
@@ -271,7 +129,7 @@ export class ReviewModal extends BaseNoteModal {
     await this.saveBodyEdits();
     this.progressLog.push(this.reactionColor(reaction));
     if (reaction === "skip") {
-       this.reviewedInSession.add(this.note.filepath); 
+      this.reviewedInSession.add(this.note.filepath);
       await this.showNextNote();
       return;
     }
@@ -294,7 +152,7 @@ export class ReviewModal extends BaseNoteModal {
       noteState: reaction,
     };
     this.note = updatedNote;
-    await writeNoteRecord(this.app, this.note.filepath, updatedNote);
+    await writeNoteRecord(this.plugin, this.note.filepath, updatedNote);
     await saveStore(this.plugin, this.plugin.data);
     await this.showNextNote();
   }
@@ -303,12 +161,12 @@ export class ReviewModal extends BaseNoteModal {
     await this.saveTitle();
     await this.saveBodyEdits();
     this.progressLog.push(this.reactionColor("archive"));
-    await writeNoteRecord(this.app, this.note.filepath, { interval: -1 });
+    await writeNoteRecord(this.plugin, this.note.filepath, { interval: -1 });
     await this.showNextNote();
   }
 
   private async showNextNote() {
-    const allNotes = getNotesFromVault(this.app, this.plugin.settings).filter(
+    const allNotes = getNotesFromVault(this.plugin).filter(
       (n) => n.interval >= 0 && !this.reviewedInSession.has(n.filepath),
     );
     const note = pickNoteToReview(allNotes, this.plugin.settings);
@@ -344,8 +202,6 @@ export class ReviewModal extends BaseNoteModal {
 
     const reactions = getActiveReactions(this.plugin.settings);
     const reactionDef = reactions.find((r) => r.id === reaction);
-
-    // ← check custom color override before falling through to the ramp
     if (reactionDef?.color) return reactionDef.color;
 
     const ramp = [
@@ -362,12 +218,12 @@ export class ReviewModal extends BaseNoteModal {
     return ramp[Math.round(t * (ramp.length - 1))];
   }
 
-  private renderProgressBar(container: HTMLElement) {
-    const bar = container.createDiv({ cls: "spaced-review-progress-bar" });
+  protected getProgressSegments(): string[] {
+    const segments: string[] = [];
     for (let i = 0; i < this.sessionSize; i++) {
-      const seg = bar.createDiv({ cls: "spaced-review-progress-seg" });
-      if (this.progressLog[i]) seg.addClass(this.progressLog[i]);
+      segments.push(this.progressLog[i] ?? "");
     }
+    return segments;
   }
 
   public resumeSession(session: SrsSession) {
@@ -376,10 +232,7 @@ export class ReviewModal extends BaseNoteModal {
     this.sessionSize = session.sessionSize;
   }
 
-  onClose() {
-    void this.saveTitle();
-    void this.saveBodyEdits();
-        this.teardownVaultListener();
+  protected onSessionClose(): void {
     if (this.sessionSize > 0) {
       if (this.reviewedInSession.size < this.sessionSize) {
         this.plugin.data.srsSession = {
@@ -392,7 +245,12 @@ export class ReviewModal extends BaseNoteModal {
       }
       void saveStore(this.plugin, this.plugin.data);
     }
-    this.cleanupEditors();
-    this.contentEl.empty();
   }
+}
+
+function formatInterval(days: number): string {
+  if (days < 7) return `${days}d`;
+  if (days < 30) return `${Math.round(days / 7)}w`;
+  if (days < 365) return `${Math.round(days / 30)}mo`;
+  return `${Math.round(days / 365)}y`;
 }

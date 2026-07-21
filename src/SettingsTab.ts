@@ -1,6 +1,6 @@
 import type SpacedEverythingPlugin from "./main";
 import { App, Modal, Notice, setIcon, PluginSettingTab, Setting } from "obsidian";
-import { CustomReactionSet } from "./types";
+import { CustomReactionSet, DayName } from "./types";
 
 const REACTION_RAMP = [
   "spaced-seg-purple",
@@ -297,6 +297,73 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
         }),
       );
 
+      // System  
+containerEl.createEl("h3", { text: "System" });  
+  
+new Setting(containerEl)  
+  .setName("Weekend days")  
+  .setDesc("Days treated as weekend for context auto-detection in System modal.")  
+  .then((setting) => {  
+    const days: DayName[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];  
+    const row = setting.controlEl.createDiv({ cls: "spaced-day-toggle-row" });  
+    for (const day of days) {  
+      const btn = row.createEl("button", { text: day, cls: "spaced-day-toggle" });  
+      if (this.plugin.settings.weekendDays.includes(day)) btn.addClass("is-active");  
+      btn.addEventListener("click", async () => {  
+        const current = this.plugin.settings.weekendDays;  
+        if (current.includes(day)) {  
+          this.plugin.settings.weekendDays = current.filter((d) => d !== day);  
+          btn.removeClass("is-active");  
+        } else {  
+          this.plugin.settings.weekendDays = [...current, day];  
+          btn.addClass("is-active");  
+        }  
+        await this.plugin.saveSettings();  
+      });  
+    }  
+  });
+
+  containerEl.createEl("h3", { text: "Note state values" });
+  containerEl.createEl("p", {
+    text: "Values available in the state badge dropdown during review.",
+    cls: "setting-item-description",
+  });
+
+  for (const val of this.plugin.settings.noteStateValues) {
+    new Setting(containerEl).setName(val).addButton((btn) =>
+      btn
+        .setButtonText("Remove")
+        .setWarning()
+        .onClick(async () => {
+          this.plugin.settings.noteStateValues = this.plugin.settings.noteStateValues.filter((v) => v !== val);
+          await this.plugin.saveSettings();
+          this.display();
+        }),
+    );
+  }
+
+  let pendingStateValue = "";
+  new Setting(containerEl)
+    .setName("Add state value")
+    .addText((text) =>
+      text.setPlaceholder("e.g. incubating").onChange((v) => {
+        pendingStateValue = v;
+      }),
+    )
+    .addButton((btn) =>
+      btn.setButtonText("Add").onClick(async () => {
+        const trimmed = pendingStateValue.trim();
+        if (!trimmed) return;
+        if (this.plugin.settings.noteStateValues.includes(trimmed)) {
+          new Notice(`"${trimmed}" already exists.`);
+          return;
+        }
+        this.plugin.settings.noteStateValues.push(trimmed);
+        await this.plugin.saveSettings();
+        this.display();
+      }),
+    );
+    
     // Danger zone
     containerEl.createEl("h3", { text: "Danger Zone" });
 
@@ -386,7 +453,7 @@ class CustomReactionSetModal extends Modal {
       const tAuto = autoN <= 1 ? 0.5 : autoIdx / (autoN - 1);
       const tFull = reactions.length === 1 ? 0.5 : i / (reactions.length - 1);
       const t = r.manualOverride ? tFull : tAuto;
-      const mult = 0.83 + (1.5 - 0.83) * t;
+      const mult = t <= 0.5 ? 0.5 + 0.5 * (t * 2) : 1.0 + 2.0 * ((t - 0.5) * 2);
       const easeDelta = Math.round(20 - 40 * t);
       const sign = easeDelta >= 0 ? "+" : "";
 
@@ -410,7 +477,7 @@ class CustomReactionSetModal extends Modal {
           delete reactions[i].intervalMult;
           delete reactions[i].easeDelta;
         } else {
-          reactions[i].intervalMult = parseFloat((0.83 + (1.5 - 0.83) * tFull).toFixed(2));
+          reactions[i          reactions[i].intervalMult = parseFloat((tFull <= 0.5 ? 0.5 + 0.5 * (tFull * 2) : 1.0 + 2.0 * ((tFull - 0.5) * 2)).toFixed(2));].intervalMult = parseFloat((0.83 + (1.5 - 0.83) * tFull).toFixed(2));
           reactions[i].easeDelta = Math.round(20 - 40 * tFull);
         }
         await this.plugin.saveSettings();

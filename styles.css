@@ -28,7 +28,133 @@
   overflow: hidden;  
   text-overflow: ellipsis;  
 }  
+
+/* system modal */
+.spaced-timeblock-row,  
+.spaced-context-row {  
+  display: flex;  
+  align-items: center;  
+  gap: 6px;  
+  margin-top: 6px;  
+  font-size: 0.85em;  
+  color: var(--text-muted);  
+}  
   
+.spaced-timeblock-picker,  
+.spaced-context-dropdown {  
+  position: absolute;  
+  background: var(--background-primary);  
+  border: 1px solid var(--background-modifier-border);  
+  border-radius: 6px;  
+  padding: 6px;  
+  z-index: 100;  
+  display: flex;  
+  flex-direction: column;  
+  gap: 4px;  
+  box-shadow: var(--shadow-s);  
+}  
+  
+.spaced-timeblock-option {  
+  background: none;  
+  border: none;  
+  cursor: pointer;  
+  padding: 4px 8px;  
+  border-radius: 4px;  
+  text-align: left;  
+}  
+.spaced-timeblock-option:hover,  
+.spaced-timeblock-option.is-active {  
+  background: var(--background-modifier-hover);  
+}  
+  
+.spaced-context-option {  
+  display: flex;  
+  align-items: center;  
+  gap: 6px;  
+  padding: 2px 4px;  
+}
+
+.spaced-leech-banner {  
+  display: flex;  
+  align-items: center;  
+  justify-content: space-between;  
+  gap: 8px;  
+  padding: 6px 10px;  
+  margin-bottom: 8px;  
+  border-radius: 4px;  
+  background: var(--background-modifier-error);  
+  color: var(--text-error);  
+  font-size: 0.85em;  
+}  
+  
+.spaced-leech-actions {  
+  display: flex;  
+  gap: 4px;  
+  flex-shrink: 0;  
+}
+
+.spaced-day-toggle-row {  
+  display: flex;  
+  gap: 4px;  
+  flex-wrap: wrap;  
+}  
+  
+.spaced-day-toggle {  
+  padding: 2px 8px;  
+  border-radius: 4px;  
+  border: 1px solid var(--background-modifier-border);  
+  background: transparent;  
+  cursor: pointer;  
+  font-size: 0.85em;  
+}  
+  
+.spaced-day-toggle.is-active {  
+  background: var(--interactive-accent);  
+  color: var(--text-on-accent);  
+  border-color: var(--interactive-accent);  
+}
+
+/* MakeActionableModal */
+.spaced-mka-label {  
+  font-size: 0.85em;  
+  color: var(--text-muted);  
+  margin: 12px 0 4px;  
+}  
+  
+.spaced-mka-row {  
+  display: flex;  
+  gap: 6px;  
+  flex-wrap: wrap;  
+  margin-bottom: 4px;  
+}  
+  
+.spaced-mka-btn {  
+  display: flex;  
+  flex-direction: column;  
+  align-items: flex-start;  
+  padding: 6px 10px;  
+  border-radius: 6px;  
+  border: 1px solid var(--background-modifier-border);  
+  background: transparent;  
+  cursor: pointer;  
+  text-align: left;  
+}  
+  
+.spaced-mka-btn.is-active {  
+  border-color: var(--interactive-accent);  
+  background: var(--interactive-accent-hover);  
+}  
+  
+.spaced-mka-btn-label {  
+  font-weight: 600;  
+  font-size: 0.9em;  
+}  
+  
+.spaced-mka-btn-desc {  
+  font-size: 0.75em;  
+  color: var(--text-muted);  
+}
+
 /* ── Note Title ─────────────────────────────────────────────────────────── */  
   
 .spaced-note-title {  
@@ -63,18 +189,7 @@
   overflow-y: auto;  
   padding: 8px 0;  
 }  
-  
-.spaced-note-rendered {  
-  cursor: text;  
-  border-radius: 4px;  
-  padding: 6px 8px;  
-  min-height: 60px;  
-}  
-  
-.spaced-note-rendered:hover {  
-  background: var(--background-modifier-hover);  
-}  
-  
+   
 .spaced-note-body {  
   width: 100%;  
   min-height: 200px;  
@@ -214,23 +329,35 @@
   display: flex;  
   gap: 8px;  
   flex-wrap: wrap;  
-  margin-top: 16px;  
   padding-top: 12px;  
   border-top: 1px solid var(--background-modifier-border);  
 }  
-  
-.spaced-btn {  
-  padding: 6px 14px;  
-  border-radius: 4px;  
-  cursor: pointer;  
-  font-size: 0.9em;  
-  border: 1px solid var(--background-modifier-border);  
-  background: var(--background-secondary);  
-  color: var(--text-normal);  
-  outline: 2px solid transparent;  
-  transition: filter 0.1s ease, outline-color 0.1s ease;  
-  filter: brightness(0.85); 
+
+.spaced-btn-wrapper {  
+  display: flex;  
+  flex-direction: column;  
+  align-items: center;  
+  gap: 3px;  
 }  
+  
+.spaced-btn-interval {  
+  font-size: 0.72em;  
+  opacity: 0.65;  
+  line-height: 1;  
+}
+  
+.spaced-btn {    
+  padding: 6px 14px;    
+  border-radius: 4px;    
+  cursor: pointer;    
+  font-size: 0.9em;    
+  border: 1px solid var(--background-modifier-border);    
+  background: var(--background-secondary);    
+  color: var(--text-normal);    
+  outline: 2px solid transparent;    
+  transition: filter 0.1s ease, outline-color 0.1s ease;    
+  filter: brightness(0.85);   
+}
 
 .spaced-btn:hover {  
   filter: brightness(1);  
@@ -293,6 +420,46 @@ button.mod-purple { background-color: var(--color-purple); color: var(--text-on-
   width: 14px;  
   height: 14px;  
 }  
+
+/* note state badge */
+.spaced-state-badge {  
+  font-size: 0.75em;  
+  padding: 2px 7px;  
+  border-radius: 10px;  
+  background: var(--background-modifier-border);  
+  color: var(--text-muted);  
+  cursor: pointer;  
+  user-select: none;  
+  white-space: nowrap;  
+}
+  
+.spaced-state-dropdown {  
+  position: absolute;  
+  right: 0;  
+  top: 100%;  
+  z-index: 100;  
+  background: var(--background-primary);  
+  border: 1px solid var(--background-modifier-border);  
+  border-radius: 6px;  
+  padding: 4px;  
+  display: flex;  
+  flex-direction: column;  
+  gap: 2px;  
+  min-width: 120px;  
+  
+}  
+  
+.spaced-state-option {  
+  padding: 4px 10px;  
+  border-radius: 4px;  
+  font-size: 0.85em;  
+  cursor: pointer;  
+}  
+  
+.spaced-state-option:hover,  
+.spaced-state-option.is-active {  
+  background: var(--background-modifier-hover);  
+}
   
 /* ── Deck Picker ────────────────────────────────────────────────────────── */  
   
@@ -456,35 +623,23 @@ button.mod-purple { background-color: var(--color-purple); color: var(--text-on-
   
 /* ── Progress Bars ──────────────────────────────────────────────────────── */  
   
-.spaced-active-progress-bar,  
-.spaced-review-progress-bar {  
+.spaced-progress-bar {  
   display: flex;  
   height: 5px;  
   width: 100%;  
   overflow: hidden;  
-}  
-  
-.spaced-active-progress-bar {  
   margin-top: 16px;  
-  border-radius: 3px;  
+  border-radius: 3px;   
 }  
   
-.spaced-review-progress-bar {  
-  margin-top: 12px;  
-}  
-  
-.spaced-active-progress-seg,  
-.spaced-review-progress-seg {  
+.spaced-progress-seg {  
   flex: 1;  
   background: var(--background-modifier-border);  
-}  
-  
-.spaced-review-progress-seg {  
   height: 100%;  
 }  
   
-.spaced-active-progress-pass { background: var(--color-green); }  
-.spaced-active-progress-fail { background: var(--color-red); }  
+.spaced-progress-pass { background: var(--color-green); }  
+.spaced-progress-fail { background: var(--color-red); }  
   
 /* Reaction color segments */  
 .spaced-seg-purple { background: var(--color-purple) !important; }  
@@ -494,6 +649,13 @@ button.mod-purple { background-color: var(--color-purple); color: var(--text-on-
 .spaced-seg-orange { background: var(--color-orange) !important; }  
 .spaced-seg-red    { background: var(--color-red) !important; }
 .spaced-seg-skip   { background: transparent; }  
+
+.spaced-sticky-footer {  
+  position: sticky;  
+  bottom: 0;  
+  background: var(--modal-background, var(--background-primary));  
+  padding-bottom: var(--modal-padding, 16px);  
+}
   
 /* ── Bar Chart (stats) ──────────────────────────────────────────────────── */  
   

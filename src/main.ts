@@ -7,10 +7,10 @@ import { StatsView, STATS_VIEW_TYPE } from "./StatsView";
 import { DeckPickerModal } from "./DeckPickerModal";
 import { FolderDeckPickerModal } from "./FolderDeckPickerModal";
 import { SpacedEverythingSettings, DEFAULT_SETTINGS, PluginData, NoteRecord } from "./types";
-import { getNotesFromVault, writeFrontmatterActive } from "./frontmatter";
+import { getNotesFromVault, writeFrontmatterActive, migrateSeToStore } from "./frontmatter";  
 import { pickNoteToReview, noteIsDue } from "./scheduler";
 import { today } from "./utils";
-import { TestModal } from "./testmodal";
+import { SystemModal } from "./SystemModal";
 
 export default class SpacedEverythingPlugin extends Plugin {
   settings: SpacedEverythingSettings;
@@ -22,6 +22,21 @@ export default class SpacedEverythingPlugin extends Plugin {
     await this.loadSettings();
     this.data = await loadStore(this);
 
+    this.app.workspace.onLayoutReady(async () => {
+      await migrateSeToStore(this);
+    });
+
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (!(file instanceof TFile) || file.extension !== "md") return;
+        if (this.data.noteRecords?.[oldPath]) {
+          this.data.noteRecords[file.path] = this.data.noteRecords[oldPath];
+          delete this.data.noteRecords[oldPath];
+          void saveStore(this, this.data);
+        }
+      }),
+    );
+
     this.statusBarItem = this.addStatusBarItem();
     this.updateStatusBar();
 
@@ -29,6 +44,14 @@ export default class SpacedEverythingPlugin extends Plugin {
 
     this.addRibbonIcon("clock", "Show due notes", () => this.activateDueNotesView());
 
+    this.addCommand({
+      id: "start-system-review",
+      name: "Start system review",
+      callback: () => {
+        new SystemModal(this.app, this).open();
+      },
+    });
+    
     this.addCommand({
       id: "show-due-notes",
       name: "Show due notes",
@@ -42,7 +65,7 @@ export default class SpacedEverythingPlugin extends Plugin {
       name: "Review next note",
       callback: async () => {
         delete this.data.srsSession;
-        const notes = getNotesFromVault(this.app, this.settings).filter((n) => n.interval >= 0);
+        const notes = getNotesFromVault(this).filter((n) => n.interval >= 0);
         const dueCount = notes.filter((n) => noteIsDue(n)).length;
         this.data.reviewLoadLog.push({ timestamp: today(), numNotes: notes.length, numDue: dueCount });
         await saveStore(this, this.data);
@@ -67,7 +90,7 @@ export default class SpacedEverythingPlugin extends Plugin {
           new Notice("No saved session found. Use 'Review next note' to start one.");
           return;
         }
-        const allNotes = getNotesFromVault(this.app, this.settings).filter((n) => n.interval >= 0);
+        const allNotes = getNotesFromVault(this).filter((n) => n.interval >= 0);
         const remaining = allNotes.filter((n) => noteIsDue(n) && !saved.reviewedFilepaths.includes(n.filepath));
         if (remaining.length === 0) {
           new Notice("Session complete — no notes remaining.");
@@ -192,7 +215,7 @@ https://deepwiki.com/search/sometimes-i-have-a-problem-whe_b957aec4-c8f6-4a07-a9
   }
 
   updateStatusBar(precomputed?: NoteRecord[]) {
-    const allNotes = precomputed ?? getNotesFromVault(this.app, this.settings).filter((n) => n.interval >= 0);
+    const allNotes = precomputed ?? getNotesFromVault(this).filter((n) => n.interval >= 0);
     const dueCount = allNotes.filter((n) => noteIsDue(n)).length;
     this.statusBarItem.setText(`${dueCount} due`);
   }
