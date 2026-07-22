@@ -25,9 +25,6 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@tiptap/core": "^3.27.1",
-    "@tiptap/extension-link": "^3.27.1",
-    "@tiptap/starter-kit": "^3.27.1",
     "d3-array": "^3.2.4",
     "d3-scale": "^4.0.2",
     "d3-selection": "^3.0.0",

@@ -1,10 +1,11 @@
 {
-  "id": "spaced-everything",
-  "name": "Spaced Everything",
-  "version": "1.0.0",
-  "minAppVersion": "1.4.0",
-  "description": "Spaced repetition for your notes — port of spaced-inbox by Issa Rice.",
-  "author": "pupmode",
-  "authorUrl": "https://github.com/pupmode",
-  "isDesktopOnly": false
+	"id": "spaced-everything",
+	"name": "Spaced everything",
+	"version": "1.3.4",
+	"minAppVersion": "1.6.7",
+	"description": "Apply spaced repetition algorithms to everything in your vault.",
+	"author": "Zach Mueller",
+	"authorUrl": "https://notes.zach.nz",
+	"fundingUrl": "https://buymeacoffee.com/zachmueller",
+	"isDesktopOnly": false
 }

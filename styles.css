@@ -243,9 +243,9 @@
   vertical-align: baseline;  
 }  
   
-/* ── Tiptap Editor ──────────────────────────────────────────────────────── */  
+/* ── Editor ──────────────────────────────────────────────────────── */  
   
-.spaced-tiptap-container {  
+.spaced-editor-container {  
   border: 1px solid var(--background-modifier-border);  
   border-radius: 4px;  
   padding: 8px;  
@@ -256,11 +256,11 @@
   cursor: text;  
 }  
   
-.spaced-tiptap-container:focus-within {  
+.spaced-editor-container:focus-within {  
   border-color: var(--interactive-accent);  
 }  
   
-.spaced-tiptap-editor {  
+.spaced-editor-editor {  
   color: var(--text-normal);  
   font-family: var(--font-text);  
   font-size: var(--font-text-size, 16px);  
@@ -271,25 +271,37 @@
   min-height: 60px;  
   word-break: break-word;  
 }  
-  
-.spaced-tiptap-editor p {  
+
+.modal .cm-content {  
+  caret-color: var(--text-normal) !important;  
+}  
+.modal .cm-cursor,  
+.modal .cm-dropCursor {  
+  border-left-color: var(--text-normal) !important;  
+}
+
+.modal .cm-editor .edit-block-button {  
+  display: none;  
+}
+
+.spaced-editor-editor p {  
   margin: 0;  
   line-height: var(--line-height-normal, 1.5);  
 }  
   
-.spaced-tiptap-editor ul,  
-.spaced-tiptap-editor ol {  
+.spaced-editor-editor ul,  
+.spaced-editor-editor ol {  
   margin: 0.25em 0;  
   padding-left: 1.5em;  
 }  
   
-.spaced-tiptap-editor li > p {  
+.spaced-editor-editor li > p {  
   margin: 0;  
   line-height: 1.5;  
 }  
   
 /* Fenced code blocks */  
-.spaced-tiptap-editor pre {  
+.spaced-editor-editor pre {  
   background: var(--code-background);  
   border-radius: var(--code-radius, 4px);  
   padding: 0.75em 1em;  
@@ -297,7 +309,7 @@
   margin: 0.5em 0;  
 }  
   
-.spaced-tiptap-editor pre code {  
+.spaced-editor-editor pre code {  
   background: none;  
   padding: 0;  
   border: none;  
@@ -308,7 +320,7 @@
 }  
   
 /* Inline code */  
-.spaced-tiptap-editor code:not(pre code) {  
+.spaced-editor-editor code:not(pre code) {  
   font-family: var(--font-monospace);  
   font-size: var(--code-size);  
   color: var(--code-normal);  
@@ -385,6 +397,23 @@
   
 button.spaced-btn-delete .svg-icon { color: var(--color-red); }  
 button.spaced-btn-skip             { color: var(--text-faint); }  
+
+.spaced-source-dropdown {  
+  position: absolute;  
+  bottom: 100%;  
+  /* align to the source button — adjust as needed */  
+  background: var(--background-secondary);  
+  border: 1px solid var(--background-modifier-border);  
+  border-radius: 6px;  
+  padding: 4px 0;  
+  z-index: 100;  
+  min-width: 160px;  
+}  
+  
+.spaced-source-greyed {  
+  opacity: 0.55;  
+   filter: grayscale(95%);
+}
   
 /* Colored mod buttons (used in done/summary screens) */  
 button.mod-green  { background-color: var(--color-green);  color: var(--text-normal); }  
@@ -639,7 +668,8 @@ button.mod-purple { background-color: var(--color-purple); color: var(--text-on-
 }  
   
 .spaced-progress-pass { background: var(--color-green); }  
-.spaced-progress-fail { background: var(--color-red); }  
+.spaced-progress-fail { background: var(--color-red); } 
+ .spaced-progress-fail { background: var(--color-base-40); } 
   
 /* Reaction color segments */  
 .spaced-seg-purple { background: var(--color-purple) !important; }  
@@ -655,6 +685,11 @@ button.mod-purple { background-color: var(--color-purple); color: var(--text-on-
   bottom: 0;  
   background: var(--modal-background, var(--background-primary));  
   padding-bottom: var(--modal-padding, 16px);  
+}
+
+.spaced-footer-disabled .spaced-btn {  
+  pointer-events: none;  
+  opacity: 0.4;  
 }
   
 /* ── Bar Chart (stats) ──────────────────────────────────────────────────── */  

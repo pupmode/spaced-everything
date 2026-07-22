@@ -2,24 +2,28 @@ import { App, Modal, TFile, Component, MarkdownRenderer, EventRef, ButtonCompone
 import { BaseNote } from "./types";
 import type SpacedEverythingPlugin from "./main";
 import { writeFrontmatterActive, writeFrontmatterDecks, stripFrontmatter } from "./frontmatter";
-import type { Editor } from "@tiptap/core";
 import { RouteFolderModal } from "./RouteFolderModal";
-import { createTiptapEditor, extractMarkdown } from "./tiptap-editor";
 import { QuickNoteModal } from "./QuickNoteModal";
 import { createDeckDropdown } from "./deckDropdown";
+import { createCM6Editor, getCM6Content, destroyCM6Editor } from "./cm6-editor";
 
 export abstract class BaseNoteModal extends Modal {
   // ── Shared fields ──────────────────────────────────────────────────────────
   protected tiptapEditor: Editor | null = null;
+  protected cm6EditMode: any = null;
+  protected cm6Leaf: any = null;
+
   protected renderComponent: Component | null = null;
   protected renderedContainer: HTMLElement | null = null;
-  protected tiptapContainer: HTMLElement | null = null;
+  protected editorContainer: HTMLElement | null = null;
   protected isEditing = false;
   protected titleEl: HTMLElement | null = null;
   protected originalTitle = "";
   protected deckName = "";
   protected showRestartButton = false;
   protected progressBarEl: HTMLElement | null = null;
+  protected footerEl: HTMLElement | null = null;
+  USE_CM6 = true;
 
   constructor(app: App) {
     super(app);
@@ -42,6 +46,7 @@ export abstract class BaseNoteModal extends Modal {
     await this.renderExtraContent(contentEl);
     await this.renderContent(contentEl);
     const footer = contentEl.createDiv({ cls: "spaced-sticky-footer" });
+    this.footerEl = footer;
     this.renderButtons(footer);
     this.renderProgressBar(footer);
   }
@@ -63,6 +68,8 @@ export abstract class BaseNoteModal extends Modal {
   }
 
   protected refreshProgressBar(): void {
+    const statusEl = this.contentEl.querySelector<HTMLElement>(".spaced-due-count");
+    if (statusEl) statusEl.textContent = this.getStatusText();
     if (!this.progressBarEl) return;
     this.progressBarEl.empty();
     const segments = this.getProgressSegments();
@@ -115,7 +122,7 @@ export abstract class BaseNoteModal extends Modal {
     this.titleEl.addEventListener("click", () => {
       if (this.isEditing) return;
       const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
-      if (file) void this.app.workspace.getLeaf(false).openFile(file);
+      if (file) void this.app.workspace.getLeaf(true).openFile(file);
     });
 
     this.titleEl.addEventListener("keydown", (e) => {
@@ -152,8 +159,9 @@ export abstract class BaseNoteModal extends Modal {
         await this.saveTitle();
         await this.saveBodyEdits();
         this.isEditing = false;
+        this.footerEl?.removeClass("spaced-footer-disabled");
         this.titleEl!.contentEditable = "false";
-        if (this.tiptapContainer) this.tiptapContainer.style.display = "none";
+        if (this.editorContainer) this.editorContainer.style.display = "none";
         if (this.renderedContainer) {
           this.renderedContainer.style.display = "";
           this.renderedContainer.empty();
@@ -179,11 +187,18 @@ export abstract class BaseNoteModal extends Modal {
         editBtn.setAttribute("aria-label", "Switch to edit view");
       } else {
         this.isEditing = true;
+        this.footerEl?.addClass("spaced-footer-disabled");
         this.titleEl!.contentEditable = "true";
         this.titleEl!.focus();
         if (this.renderedContainer) this.renderedContainer.style.display = "none";
-        if (this.tiptapContainer) this.tiptapContainer.style.display = "";
-        this.tiptapEditor?.commands.focus();
+        if (this.editorContainer) this.editorContainer.style.display = "";
+        setTimeout(() => {
+          const cm = this.cm6EditMode?.cm;
+          if (!cm) return;
+          cm.dispatch({}); // empty transaction forces a full re-render cycle
+          cm.requestMeasure();
+          cm.focus();
+        }, 0);
         setIcon(editBtn, "eye");
         this.metadataEditor?.containerEl.style.setProperty("display", "none");
         editBtn.setAttribute("aria-label", "Switch to read view");
@@ -271,31 +286,31 @@ export abstract class BaseNoteModal extends Modal {
     return cls ?? null;
   }
 
-  private applyIconicPropertyIcons(): void {  
-  if (!this.metadataEditor?.containerEl) return;  
-  const propertyIcons: Record<string, { icon?: string; color?: string }> =  
-    (this.app as any).plugins?.plugins?.['iconic']?.settings?.propertyIcons ?? {};  
-  if (!Object.keys(propertyIcons).length) return;  
-  
-  const propEls = this.metadataEditor.containerEl.findAll('.metadata-property');  
-  for (const propEl of propEls) {  
-    const key = (propEl as HTMLElement).dataset.propertyKey?.toLowerCase();  
-    if (!key) continue;  
-    const entry = propertyIcons[key];  
-    if (!entry?.icon) continue;  
-    const iconEl = propEl.find('.metadata-property-icon') as HTMLElement | null;  
-    if (!iconEl) continue;  
-    setIcon(iconEl, entry.icon);  
-    const svgEl = iconEl.find('.svg-icon') as HTMLElement | null;  
-    if (svgEl && entry.color) {  
-      svgEl.style.setProperty('color', entry.color);  
-    }  
-  }  
-}
+  private applyIconicPropertyIcons(): void {
+    if (!this.metadataEditor?.containerEl) return;
+    const propertyIcons: Record<string, { icon?: string; color?: string }> =
+      (this.app as any).plugins?.plugins?.["iconic"]?.settings?.propertyIcons ?? {};
+    if (!Object.keys(propertyIcons).length) return;
+
+    const propEls = this.metadataEditor.containerEl.findAll(".metadata-property");
+    for (const propEl of propEls) {
+      const key = (propEl as HTMLElement).dataset.propertyKey?.toLowerCase();
+      if (!key) continue;
+      const entry = propertyIcons[key];
+      if (!entry?.icon) continue;
+      const iconEl = propEl.find(".metadata-property-icon") as HTMLElement | null;
+      if (!iconEl) continue;
+      setIcon(iconEl, entry.icon);
+      const svgEl = iconEl.find(".svg-icon") as HTMLElement | null;
+      if (svgEl && entry.color) {
+        svgEl.style.setProperty("color", entry.color);
+      }
+    }
+  }
 
   protected async refreshContent(): Promise<void> {
     if (this.isEditing || !this.renderedContainer) return;
-    if (this.renderedContainer.contains(document.activeElement)) return;  
+    if (this.renderedContainer.contains(document.activeElement)) return;
     const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
     if (!file) return;
     const raw = await this.app.vault.read(file);
@@ -306,10 +321,28 @@ export abstract class BaseNoteModal extends Modal {
     this.renderComponent.load();
     await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
   }
-
+  /*
   protected async saveBodyEdits(): Promise<void> {
     if (!this.isEditing || !this.tiptapEditor) return;
     const newBody = extractMarkdown(this.tiptapEditor);
+    const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+    if (!file) return;
+    const raw = await this.app.vault.read(file);
+    const { frontmatter, body } = stripFrontmatter(raw);
+    if (newBody.trim() === body.trim()) return;
+    await this.app.vault.modify(file, frontmatter ? `${frontmatter}\n${newBody}` : newBody);
+  }*/
+
+  protected async saveBodyEdits(): Promise<void> {
+    if (!this.isEditing) return;
+    const newBody = this.USE_CM6
+      ? this.cm6EditMode
+        ? getCM6Content(this.cm6EditMode)
+        : null
+      : this.tiptapEditor
+        ? extractMarkdown(this.tiptapEditor)
+        : null;
+    if (newBody === null) return;
     const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
     if (!file) return;
     const raw = await this.app.vault.read(file);
@@ -346,7 +379,7 @@ export abstract class BaseNoteModal extends Modal {
       this.note = { ...this.note, filepath: newPath };
     }).open();
   }
-
+  /*
   protected cleanupEditors(): void {
     this.tiptapEditor?.destroy();
     this.tiptapEditor = null;
@@ -355,7 +388,27 @@ export abstract class BaseNoteModal extends Modal {
     this.metadataEditor?.unload();
     this.metadataEditor = null;
     this.renderedContainer = null;
-    this.tiptapContainer = null;
+    this.editorContainer = null;
+  }
+*/
+
+  protected cleanupEditors(): void {
+    if (this.USE_CM6) {
+      if (this.cm6Leaf) {
+        destroyCM6Editor(this.cm6Leaf);
+        this.cm6Leaf = null;
+        this.cm6EditMode = null;
+      }
+    } else {
+      this.tiptapEditor?.destroy();
+      this.tiptapEditor = null;
+    }
+    this.renderComponent?.unload();
+    this.renderComponent = null;
+    this.metadataEditor?.unload();
+    this.metadataEditor = null;
+    this.renderedContainer = null;
+    this.editorContainer = null;
   }
 
   protected addBtn(
@@ -399,20 +452,42 @@ export abstract class BaseNoteModal extends Modal {
     this.renderComponent.load();
     await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
 
+    /*
     // Tiptap editor — always created, visibility controlled by isEditing
-    this.tiptapContainer = contentEl.createDiv({ cls: "spaced-tiptap-container" });
+    this.editorContainer = contentEl.createDiv({ cls: "spaced-tiptap-container" });
     if (this.tiptapEditor) {
       this.tiptapEditor.destroy();
       this.tiptapEditor = null;
     }
-    this.tiptapEditor = createTiptapEditor(this.tiptapContainer, body);
+    this.tiptapEditor = createTiptapEditor(this.editorContainer, body);
 
     if (this.isEditing) {
       this.renderedContainer.style.display = "none";
-      this.tiptapContainer.style.display = "";
+      this.editorContainer.style.display = "";
     } else {
       this.renderedContainer.style.display = "";
-      this.tiptapContainer.style.display = "none";
+      this.editorContainer.style.display = "none";
+    }*/
+
+    this.editorContainer = contentEl.createDiv({ cls: "spaced-tiptap-container" });
+    if (this.USE_CM6) {
+      const { leaf, editMode } = await createCM6Editor(this.editorContainer, file, this.app);
+      this.cm6Leaf = leaf;
+      this.cm6EditMode = editMode;
+    } else {
+      if (this.tiptapEditor) {
+        this.tiptapEditor.destroy();
+        this.tiptapEditor = null;
+      }
+      this.tiptapEditor = createTiptapEditor(this.editorContainer, body);
+    }
+
+    if (this.isEditing) {
+      this.renderedContainer!.style.display = "none";
+      this.editorContainer.style.display = "";
+    } else {
+      this.renderedContainer!.style.display = "";
+      this.editorContainer.style.display = "none";
     }
   }
 

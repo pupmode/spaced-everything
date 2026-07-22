@@ -1,5 +1,5 @@
 import { App, TFile, setIcon } from "obsidian";
-import { NoteRecord, ReviewEvent, SrsSession, getActiveReactions } from "./types";
+import { NoteRecord, SrsSession, getActiveReactions } from "./types";
 import { nextInterval, nextEaseFactor, noteIsDue, pickNoteToReview } from "./scheduler";
 import { today } from "./utils";
 import { saveStore } from "./store";
@@ -13,12 +13,24 @@ export class ReviewModal extends BaseNoteModal {
   private reviewedInSession = new Set<string>();
   private progressLog: string[] = [];
   private sessionSize = 0;
+  private activeSources: string[] = [];
   constructor(
     app: App,
     protected plugin: SpacedEverythingPlugin,
     protected note: NoteRecord,
   ) {
     super(app);
+  }
+  private getSourceFolderList(): string[] {
+    if (this.plugin.settings.sourceScope === "folder") {
+      return this.plugin.settings.sourceFolders.map((f) => f.path);
+    }
+    // vault scope: derive unique top-level dirs from live notes
+    const notes = getNotesFromVault(this.plugin).filter((n) => n.interval >= 0);
+    const folders = new Set(
+      notes.map((n) => n.filepath.split("/")[0]).filter((seg) => seg.endsWith(".md") === false), // exclude root-level files
+    );
+    return [...folders].sort();
   }
 
   async onOpen() {
@@ -29,7 +41,10 @@ export class ReviewModal extends BaseNoteModal {
   }
 
   protected getStatusText(): string {
-    const allNotes = getNotesFromVault(this.plugin).filter((n) => n.interval >= 0);
+    let allNotes = getNotesFromVault(this.plugin).filter((n) => n.interval >= 0);
+    if (this.activeSources.length > 0) {
+      allNotes = allNotes.filter((n) => this.activeSources.some((src) => n.filepath.startsWith(src + "/")));
+    }
     const remainingDue = allNotes.filter((n) => noteIsDue(n) && !this.reviewedInSession.has(n.filepath)).length;
     return `${remainingDue} note${remainingDue !== 1 ? "s" : ""} due`;
   }
@@ -121,7 +136,86 @@ export class ReviewModal extends BaseNoteModal {
     this.addBtn(btnRow, { label: "Archive", cls: "archive", cb: () => this.archiveNote() });
     this.addBtn(btnRow, { icon: "trash-2", cls: "delete", cb: () => this.deleteNote() });
 
-    
+    // ── Source picker ────────────────────────────────────────────────────────
+    let srcDropdown: HTMLElement | null = null;
+    const srcBtn = this.addBtn(btnRow, {
+      label: "Source",
+      cls: "source",
+      tooltip: `Source: ${this.activeSources.length ? this.activeSources.join(", ") : "All"}`,
+      cb: () => {
+        if (srcDropdown) {
+          srcDropdown.remove();
+          srcDropdown = null;
+          return;
+        }
+        const folders = this.getSourceFolderList();
+        if (folders.length === 0) return;
+
+        srcDropdown = btnRow.createDiv({ cls: "spaced-source-dropdown" });
+        const isAll = this.activeSources.length === 0;
+
+        // "All" row
+        const allRow = srcDropdown.createDiv({ cls: "spaced-context-option" });
+        const allCb = allRow.createEl("input");
+        allCb.type = "checkbox";
+        allCb.checked = isAll;
+        allRow.createSpan({ text: "All" });
+        allCb.addEventListener("change", () => {
+          srcBtn.buttonEl.setAttribute(
+            "aria-label",
+            `Source: ${this.activeSources.length ? this.activeSources.join(", ") : "All"}`,
+          );
+          this.activeSources = [];
+          this.refreshSessionSize();
+          srcDropdown?.remove();
+          srcDropdown = null;
+          // re-open to reflect new state
+          srcBtn.buttonEl.click();
+        });
+
+        // Per-folder rows
+        for (const folder of folders) {
+          const row = srcDropdown.createDiv({ cls: "spaced-context-option" });
+          if (isAll) row.addClass("spaced-source-greyed");
+          const cb = row.createEl("input");
+          cb.type = "checkbox";
+          cb.checked = isAll || this.activeSources.includes(folder);
+          row.createSpan({ text: folder });
+
+          cb.addEventListener("change", () => {
+            srcBtn.buttonEl.setAttribute(
+              "aria-label",
+              `Source: ${this.activeSources.length ? this.activeSources.join(", ") : "All"}`,
+            );
+            if (this.activeSources.length === 0) {
+              this.activeSources = [folder];
+            } else if (cb.checked) {
+              this.activeSources.push(folder);
+            } else {
+              this.activeSources = this.activeSources.filter((s) => s !== folder);
+            }
+            this.refreshSessionSize(); // ← updates due count only, no full re-render
+            // re-open dropdown to reflect new checked/greyed states:
+            srcDropdown?.remove();
+            srcDropdown = null;
+            srcBtn.buttonEl.click();
+          });
+        }
+
+        const onOutside = (e: MouseEvent) => {
+          if (!srcDropdown || !document.contains(srcDropdown)) {
+            document.removeEventListener("mousedown", onOutside);
+            return;
+          }
+          if (!srcDropdown.contains(e.target as Node) && !srcBtn.buttonEl.contains(e.target as Node)) {
+            srcDropdown.remove();
+            srcDropdown = null;
+            document.removeEventListener("mousedown", onOutside);
+          }
+        };
+        document.addEventListener("mousedown", onOutside);
+      },
+    });
   }
 
   private async react(reaction: string) {
@@ -166,9 +260,12 @@ export class ReviewModal extends BaseNoteModal {
   }
 
   private async showNextNote() {
-    const allNotes = getNotesFromVault(this.plugin).filter(
+    let allNotes = getNotesFromVault(this.plugin).filter(
       (n) => n.interval >= 0 && !this.reviewedInSession.has(n.filepath),
     );
+    if (this.activeSources.length > 0) {
+      allNotes = allNotes.filter((n) => this.activeSources.some((src) => n.filepath.startsWith(src + "/")));
+    }
     const note = pickNoteToReview(allNotes, this.plugin.settings);
     if (!note) {
       const { contentEl } = this;
@@ -224,6 +321,16 @@ export class ReviewModal extends BaseNoteModal {
       segments.push(this.progressLog[i] ?? "");
     }
     return segments;
+  }
+
+  private refreshSessionSize(): void {
+    let allNotes = getNotesFromVault(this.plugin).filter((n) => n.interval >= 0);
+    if (this.activeSources.length > 0) {
+      allNotes = allNotes.filter((n) => this.activeSources.some((src) => n.filepath.startsWith(src + "/")));
+    }
+    const remainingDue = allNotes.filter((n) => noteIsDue(n) && !this.reviewedInSession.has(n.filepath)).length;
+    this.sessionSize = this.progressLog.length + remainingDue;
+    this.refreshProgressBar(); // updates due count text + redraws bar
   }
 
   public resumeSession(session: SrsSession) {

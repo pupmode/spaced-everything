@@ -17,12 +17,15 @@ export interface NoteRecord extends BaseNote {
 
 export type EnergyColor = "🔥" | "🪔" | "🌊" | "🌿";  
 export type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
-
-export interface ActionNote extends BaseNote {
-  energy?: EnergyColor | EnergyColor[];
-  timeblock?: string | string[];
-  due?: string;
-  context?: string | string[];
+ 
+export interface ActionNote extends BaseNote {  
+  energy?: EnergyColor | EnergyColor[];  
+  timeblock?: string | string[];  
+  due?: string;  
+  context?: string | string[];  
+  timescope?: "daily" | "every-other-day" | "weekly" | "every-other-week" | "monthly" | "seasonal" | "yearly";  
+  last_completed?: string;   // YYYY-MM-DD  
+  skipped?: number;  
 }
 
 export interface CustomReactionSet {
@@ -41,9 +44,9 @@ export interface CramSession {
 export interface SystemSession {
   remaining: string[];
   failed: string[];
-  progressLog: ("pass" | "fail")[];
+  progressLog: ("pass" | "fail" | "skip")[];
   currentRoundSize: number;
-  energyLevel: "high" | "low";
+  energyLevel: "high" | "low" | null;
   activeTimeblocks: string[];
   activeContexts: string[];
 }
@@ -94,8 +97,8 @@ export interface PluginData {
   deckLastUsed?: Record<string, string>;
   srsSession?: SrsSession;
   systemSession?: SystemSession;
-  systemLeechCounts?: Record<string, number>;
   noteRecords: Record<string, SrsRecord>;
+  systemSkippedToday?: { date: string; filepaths: string[] };
 }
 
 export interface SpacedEverythingSettings {

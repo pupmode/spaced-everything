@@ -122,13 +122,13 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
             }
           }
           drop.onChange((v) => {
-            pendingFolder = v;
+            this.pendingFolder = v;
           });
         })
         .addButton((btn) =>
           btn.setButtonText("Add").onClick(async () => {
-            if (pendingFolder && !this.plugin.settings.sourceFolders.some((e) => e.path === pendingFolder)) {
-              this.plugin.settings.sourceFolders.push({ path: pendingFolder, weight: 100 });
+            if (this.pendingFolder && !this.plugin.settings.sourceFolders.some((e) => e.path === this.pendingFolder)) {
+              this.plugin.settings.sourceFolders.push({ path: this.pendingFolder, weight: 100 });
               await this.plugin.saveSettings();
               this.display();
             }
@@ -208,11 +208,11 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
         text.setValue(String(this.plugin.settings.excitingThreshold)).onChange(async (v) => {
           const n = parseFloat(v);
           if (!isNaN(n) && n >= 0 && n <= 1) {
-            if (n >= this.plugin.settings.excitingThreshold) {
-              new Notice("Recent-note threshold must be less than exciting threshold.");
+            if (n <= this.plugin.settings.recentUndueThreshold) {
+              new Notice("Exciting threshold must be greater than recent-note threshold.");
               return;
             }
-            this.plugin.settings.recentUndueThreshold = n;
+            this.plugin.settings.excitingThreshold = n; 
             await this.plugin.saveSettings();
           }
         }),
@@ -247,16 +247,6 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
           btn
             .setButtonText("Open editor")
             .onClick(() => new CustomReactionSetModal(this.app, this.plugin, activeSet).open()),
-        );
-    }
-
-    if (activeSet) {
-      new Setting(containerEl)
-        .setName(`Edit: ${activeSet.name}`)
-        .addButton((btn) =>
-          btn
-            .setButtonText("Open editor")
-            .onClick(() => new CustomReactionSetModal(this.app, this.plugin, activeSet).open()),
         )
         .addButton((btn) =>
           btn
@@ -278,12 +268,12 @@ export class SpacedEverythingSettingsTab extends PluginSettingTab {
       .setName("Add custom reaction set")
       .addText((text) =>
         text.setPlaceholder("Set name").onChange((v) => {
-          pendingSetName = v;
+          this.pendingSetName = v;
         }),
       )
       .addButton((btn) =>
         btn.setButtonText("Add").onClick(async () => {
-          const name = pendingSetName.trim();
+          const name = this.pendingSetName.trim();
           if (!name) return;
           const id = name.toLowerCase().replace(/\s+/g, "-");
           if (this.plugin.settings.customReactionSets.some((s) => s.id === id)) {

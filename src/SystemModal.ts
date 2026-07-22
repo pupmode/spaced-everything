@@ -1,4 +1,4 @@
-import { App, Notice, setIcon } from "obsidian";
+import { App, Notice, setIcon, TFile } from "obsidian";
 import { ActionNote, SystemSession } from "./types";
 import type SpacedEverythingPlugin from "./main";
 import { saveStore } from "./store";
@@ -9,10 +9,17 @@ import {
   filterByEnergyLevel,
   filterByTimeblock,
   filterByContext,
-  sortActionNotes,
   getAllContextValues,
+  isDue,
+  today
 } from "./utils";
-import { writeFrontmatterActive } from "./frontmatter";
+import {
+  writeFrontmatterActive,
+  writeFrontmatterRecurringComplete,
+  writeFrontmatterSkip,
+  readNoteRecord,
+} from "./frontmatter";;
+import { SubtaskModal } from "./SubtaskModal";
 
 export class SystemModal extends BaseNoteModal {
   protected plugin: SpacedEverythingPlugin;
@@ -22,11 +29,8 @@ export class SystemModal extends BaseNoteModal {
   private remaining: ActionNote[] = [];
   private passed: ActionNote[] = [];
   private failed: ActionNote[] = [];
-  private progressLog: ("pass" | "fail")[] = [];
+  private progressLog: ("pass" | "fail" | "skip")[] = [];
   private currentRoundSize = 0;
-  private static readonly LEECH_THRESHOLD = 5;
-  private passedInSession = new Set<string>();
-  private retriedInSession = new Set<string>();
   private energyLevel: "high" | "low" | null = null;
   private activeTimeblocks: string[] = [];
   private activeContexts: string[] = [];
@@ -39,10 +43,6 @@ export class SystemModal extends BaseNoteModal {
   }
 
   // ── BaseNoteModal hooks ────────────────────────────────────────────────────
-
-  protected shouldOpen(): boolean {
-    return true;
-  }
 
   protected async renderModal(): Promise<void> {
     const saved = this.plugin.data.systemSession;
@@ -72,8 +72,8 @@ export class SystemModal extends BaseNoteModal {
   }
 
   protected async renderExtraContent(contentEl: HTMLElement): Promise<void> {
-    const leechCount = this.plugin.data.systemLeechCounts?.[this.note.filepath] ?? 0;
-    if (leechCount >= SystemModal.LEECH_THRESHOLD) {
+    const skipCount = this.note.skipped ?? 0;
+    if (skipCount >= 2) {
       this.renderLeechBanner(contentEl);
     }
   }
@@ -88,6 +88,7 @@ export class SystemModal extends BaseNoteModal {
       const log = this.progressLog[i];
       if (log === "pass") segments.push("spaced-progress-pass");
       else if (log === "fail") segments.push("spaced-progress-fail");
+      else if (log === "skip") segments.push("spaced-progress-skip");
       else segments.push("");
     }
     return segments;
@@ -97,6 +98,7 @@ export class SystemModal extends BaseNoteModal {
     const btnRow = container.createDiv({ cls: "spaced-btn-row" });
     this.addBtn(btnRow, { label: "Pass", cls: "pass", cb: () => this.respond("pass") });
     this.addBtn(btnRow, { label: "Retry", cls: "fail", cb: () => this.respond("fail") });
+    this.addBtn(btnRow, { label: "Skip", cls: "skip", tooltip: "Skip for today", cb: () => this.skipNote() });
     this.addBtn(btnRow, {
       icon: "shuffle",
       cls: "icon",
@@ -107,54 +109,56 @@ export class SystemModal extends BaseNoteModal {
       },
     });
     this.addBtn(btnRow, { icon: "route", cls: "route", tooltip: "Route →", cb: () => this.routeNote() });
+
+    // ── Subtask button ────────────────────────────────────────────────────────
+    const subtaskNotes = this.getSubtaskNotes();
+    const subtaskBtn = this.addBtn(btnRow, {
+      icon: "list-checks",
+      cls: "subtasks",
+      tooltip:
+        subtaskNotes.length > 0
+          ? `Open ${subtaskNotes.length} subtask${subtaskNotes.length !== 1 ? "s" : ""}`
+          : "No subtasks in this note",
+      cb: () => {
+        if (subtaskNotes.length === 0) return;
+        new SubtaskModal(this.app, this.plugin, subtaskNotes).open();
+      },
+    });
+    if (subtaskNotes.length === 0) subtaskBtn.setDisabled(true);
   }
 
-  private async applyFilters(): Promise<void> {
-    const processed = new Set([...this.passed.map((n) => n.filepath), ...this.failed.map((n) => n.filepath)]);
-
-    if (this.applyFiltersOrFallback(this.allActionNotes, processed)) {
-      await this.renderModal();
+  private async skipNote(): Promise<void> {
+    await this.saveTitle();
+    await this.saveBodyEdits();
+    const note = this.remaining.shift()!;
+    this.progressLog.push("skip");
+    await writeFrontmatterSkip(this.app, note.filepath);
+    const todayStr = today();
+    const entry = this.plugin.data.systemSkippedToday;
+    if (!entry || entry.date !== todayStr) {
+      this.plugin.data.systemSkippedToday = { date: todayStr, filepaths: [note.filepath] };
     } else {
-      await this.showSummary(this.failed.length === 0);
+      entry.filepaths.push(note.filepath);
     }
+    await saveStore(this.plugin, this.plugin.data);
+    await this.renderModal();
   }
 
   private applyFiltersInline(): void {
     const processed = new Set([...this.passed.map((n) => n.filepath), ...this.failed.map((n) => n.filepath)]);
 
-    const byEnergy = this.energyLevel
-      ? filterByEnergyLevel(this.allActionNotes, this.energyLevel)
-      : this.allActionNotes;
-
-    const filtered = sortActionNotes(
-      filterByContext(filterByTimeblock(byEnergy, this.activeTimeblocks), this.activeContexts),
-    ).filter((n) => !processed.has(n.filepath));
-
-    // Keep current note at front if it's still in the filtered pool
+    // Keep current note at front if still valid
     const currentPath = this.note?.filepath;
-    const currentStillValid = filtered.find((n) => n.filepath === currentPath);
-    const rest = filtered.filter((n) => n.filepath !== currentPath);
-    this.remaining = currentStillValid ? [currentStillValid, ...rest] : rest;
+    this.buildFilteredRemaining(this.allActionNotes, processed);
 
-    // Grow currentRoundSize if pool expanded; never shrink below already-processed count
-    const total = this.remaining.length + this.passed.length + this.failed.length;
-    this.currentRoundSize = Math.max(this.currentRoundSize, total);
-
-    this.refreshProgressBar();
-  }
-
-  protected override refreshProgressBar(): void {
-    // Update status text
-    const statusEl = this.contentEl.querySelector<HTMLElement>(".spaced-due-count");
-    if (statusEl) statusEl.textContent = this.getStatusText();
-
-    // Update progress bar segments (delegates to stored reference)
-    if (!this.progressBarEl) return;
-    this.progressBarEl.empty();
-    const segments = this.getProgressSegments();
-    for (const seg of segments) {
-      this.progressBarEl.createDiv({ cls: `spaced-seg ${seg}` });
+    const currentStillValid = this.remaining.find((n) => n.filepath === currentPath);
+    if (currentStillValid) {
+      this.remaining = [currentStillValid, ...this.remaining.filter((n) => n.filepath !== currentPath)];
     }
+
+    const total = this.remaining.length + this.passed.length + this.failed.length;
+    this.currentRoundSize = this.progressLog.length + this.remaining.length;
+    this.refreshProgressBar();
   }
 
   protected renderExtraHeaderButtons(headerRight: HTMLElement): void {
@@ -257,7 +261,6 @@ export class SystemModal extends BaseNoteModal {
   }
 
   protected onSessionClose(): void {
-    void this.checkAndUpdateLeeches();
     if (this.remaining.length > 0 || this.failed.length > 0) {
       void this.saveSession();
     }
@@ -318,8 +321,6 @@ export class SystemModal extends BaseNoteModal {
     this.passed = [];
     this.failed = [];
     this.progressLog = [];
-    this.passedInSession = new Set();
-    this.retriedInSession = new Set();
     const processed = new Set<string>();
     this.buildFilteredRemaining(sourceNotes, processed);
     await this.renderModal();
@@ -373,84 +374,36 @@ export class SystemModal extends BaseNoteModal {
     this.failed = [];
     this.progressLog = [];
     this.currentRoundSize = 0;
-    this.passedInSession = new Set();
-    this.retriedInSession = new Set();
     await this.renderModal();
-  }
-
-  private applyFiltersOrFallback(sourceNotes: ActionNote[], processed: Set<string>): boolean {
-    // Try with current filters
-    if (this.buildFilteredRemaining(sourceNotes, processed)) return true;
-
-    // Auto-fallback: clear timeblocks and contexts, keep energy
-    this.activeTimeblocks = [];
-    this.activeContexts = [];
-    if (this.buildFilteredRemaining(sourceNotes, processed)) {
-      new Notice("No actions match current filters. Showing all active actions.");
-      return true;
-    }
-
-    // Still empty — clear energy too (show everything)
-    this.energyLevel = null;
-    if (this.buildFilteredRemaining(sourceNotes, processed)) {
-      new Notice("No actions match current filters. Showing all active actions.");
-      return true;
-    }
-
-    return false; // truly nothing (shouldn't happen if sourceNotes is non-empty)
   }
 
   // ── Note response ──────────────────────────────────────────────────────────
   private async respond(result: "pass" | "fail"): Promise<void> {
+    await this.saveTitle();
+    await this.saveBodyEdits();
     const note = this.remaining.shift()!;
     this.progressLog.push(result);
     if (result === "pass") {
       this.passed.push(note);
-      this.passedInSession.add(note.filepath);
+      if (note.timescope) {
+        await writeFrontmatterRecurringComplete(this.app, note.filepath);
+      }
     } else {
       this.failed.push(note);
-      this.retriedInSession.add(note.filepath);
     }
     await this.renderModal();
   }
 
-  // ── Leech tracking ──────────────────────────────────────────────────────────
-  private async checkAndUpdateLeeches(): Promise<void> {
-    if (!this.plugin.data.systemLeechCounts) {
-      this.plugin.data.systemLeechCounts = {};
-    }
-    const counts = this.plugin.data.systemLeechCounts;
-    const newLeeches: string[] = [];
-
-    for (const filepath of this.retriedInSession) {
-      if (this.passedInSession.has(filepath)) {
-        // Note was eventually passed — reset its leech count
-        delete counts[filepath];
-      } else {
-        // Only retried, never passed this session
-        counts[filepath] = (counts[filepath] ?? 0) + 1;
-        if (counts[filepath] >= SystemModal.LEECH_THRESHOLD) {
-          newLeeches.push(filepath);
-        }
-      }
-    }
-
-    await saveStore(this.plugin, this.plugin.data);
-
-    for (const filepath of newLeeches) {
-      const name = filepath.split("/").pop()?.replace(/\.md$/, "") ?? filepath;
-      new Notice(`⚠️ Leech detected: "${name}" — you've skipped this ${counts[filepath]} times without passing.`);
-    }
-  }
+  // ── Skipped tracking ──────────────────────────────────────────────────────────
 
   private renderLeechBanner(container: HTMLElement): void {
-    const count = this.plugin.data.systemLeechCounts?.[this.note.filepath] ?? 0;
+    const count = this.note.skipped ?? 0;
     const banner = container.createDiv({ cls: "spaced-leech-banner" });
-    banner.createSpan({ text: `⚠️ Leech (skipped ${count}×) — consider breaking this note down.` });
+    banner.createSpan({ text: `⚠️ Skipped ${count}× — consider rescheduling or breaking this down.` });
 
     const actions = banner.createDiv({ cls: "spaced-leech-actions" });
     this.addBtn(actions, {
-      label: "Make smaller",
+      label: "Edit",
       cls: "leech-edit",
       cb: async () => {
         this.isEditing = true;
@@ -471,22 +424,28 @@ export class SystemModal extends BaseNoteModal {
         this.remaining.shift();
         this.note = { ...this.note, active: false };
         await writeFrontmatterActive(this.app, this.note.filepath, false);
-        if (this.plugin.data.systemLeechCounts) {
-          delete this.plugin.data.systemLeechCounts[this.note.filepath];
-          await saveStore(this.plugin, this.plugin.data);
-        }
         await this.renderModal();
       },
     });
   }
 
+  private getSkippedToday(): Set<string> {
+    const entry = this.plugin.data.systemSkippedToday;
+    if (!entry || entry.date !== today()) return new Set();
+    return new Set(entry.filepaths);
+  }
+
   // ── Note discovery ──────────────────
 
   private loadActionNotes(): ActionNote[] {
+    const skippedToday = this.getSkippedToday();
     const notes: ActionNote[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
       if (fm?.active !== true) continue;
+      if (!fm.energy && !fm.timeblock && !fm.timescope) continue; // overflow guard
+      if (fm.timescope && !isDue(fm)) continue; // recurrence gate
+      if (skippedToday.has(file.path)) continue; // skipped today
       notes.push({
         filepath: file.path,
         active: true,
@@ -494,6 +453,9 @@ export class SystemModal extends BaseNoteModal {
         timeblock: fm.timeblock,
         due: fm.due,
         context: fm.context,
+        timescope: fm.timescope,
+        last_completed: fm.last_completed,
+        skipped: fm.skipped,
       } as ActionNote);
     }
     return notes;
@@ -504,19 +466,36 @@ export class SystemModal extends BaseNoteModal {
     contentEl.empty();
     contentEl.createEl("h3", { text: "No action notes found in vault" });
     contentEl.createEl("p", {
-      text: "Add notes with systemtype: action and active: true to use the System modal.",
+      text: "Add notes with active: true and at least one of energy, timeblock, or timescope to use the System modal.",
       cls: "spaced-empty-desc",
     });
     const btnRow = contentEl.createDiv({ cls: "spaced-btn-row" });
     this.addBtn(btnRow, { label: "Close", cls: "close", cb: () => this.close() });
   }
 
+  private static readonly SESSION_SIZE = 20;
+  private static readonly DUE_SLOTS = 10;
+
   private buildFilteredRemaining(sourceNotes: ActionNote[], processed: Set<string>): boolean {
-    const byEnergy = this.energyLevel ? filterByEnergyLevel(sourceNotes, this.energyLevel) : sourceNotes; // null → skip energy filter, show all
+    const byEnergy = this.energyLevel ? filterByEnergyLevel(sourceNotes, this.energyLevel) : sourceNotes;
     const byTimeblock = filterByTimeblock(byEnergy, this.activeTimeblocks);
     const byContext = filterByContext(byTimeblock, this.activeContexts);
-    const sorted = sortActionNotes(byContext);
-    this.remaining = sorted.filter((n) => !processed.has(n.filepath));
+    const unprocessed = byContext.filter((n) => !processed.has(n.filepath));
+
+    const withDue = unprocessed
+      .filter((n) => !!n.due)
+      .sort((a, b) => new Date(a.due!).getTime() - new Date(b.due!).getTime());
+    const noDueAll = unprocessed.filter((n) => !n.due);
+    const skippedBefore = noDueAll
+      .filter((n) => (n.skipped ?? 0) > 0)
+      .sort((a, b) => (b.skipped ?? 0) - (a.skipped ?? 0)); // most-skipped first
+    const neverSkipped = shuffleArray(noDueAll.filter((n) => !(n.skipped ?? 0)));
+    const withoutDue = [...skippedBefore, ...neverSkipped];
+
+    const dueSlice = withDue.slice(0, SystemModal.DUE_SLOTS);
+    const noDueSlice = withoutDue.slice(0, SystemModal.SESSION_SIZE - dueSlice.length);
+
+    this.remaining = [...dueSlice, ...noDueSlice];
     this.currentRoundSize = this.remaining.length;
     return this.remaining.length > 0;
   }
@@ -540,4 +519,31 @@ export class SystemModal extends BaseNoteModal {
     };
     await saveStore(this.plugin, this.plugin.data);
   }
+  // Subtask Modal
+  private getSubtaskNotes(): NoteRecord[] {
+    const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
+    if (!file) return [];
+    const cache = this.app.metadataCache.getFileCache(file);
+    if (!cache) return [];
+
+    // Find lines that are task list items
+    const taskLines = new Set(
+      (cache.listItems ?? [])
+        .filter((item) => item.task !== undefined) // task items only (not plain list items)
+        .map((item) => item.position.start.line),
+    );
+
+    const notes: NoteRecord[] = [];
+    for (const link of cache.links ?? []) {
+      // Only include links that appear on a task list line
+      if (!taskLines.has(link.position.start.line)) continue;
+      const target = this.app.metadataCache.getFirstLinkpathDest(link.link, this.note.filepath);
+      if (!target || !(target instanceof TFile)) continue;
+      notes.push(
+        readNoteRecord(this.plugin, target),
+      );
+    }
+    return notes;
+  }
 }
+

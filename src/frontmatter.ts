@@ -6,10 +6,9 @@ import type SpacedEverythingPlugin from "./main";
 
 function daysAgo(n: number): string {
   const d = new Date();
-  d.setDate(d.getDate() - n);
+  d.setUTCDate(d.getUTCDate() - n);
   return d.toISOString().slice(0, 10);
 }
-
 // ── Read ──────────────────────────────────────────────────────────────────────
 
 export function readNoteRecord(plugin: SpacedEverythingPlugin, file: TFile): NoteRecord {
@@ -58,7 +57,6 @@ export async function writeFrontmatterActionable(
   const file = app.vault.getAbstractFileByPath(filepath) as TFile | null;
   if (!file) return;
   await app.fileManager.processFrontMatter(file, (fm) => {
-    fm.systemtype = "action";
     fm.active = true;
     if (opts.energy !== undefined) fm.energy = opts.energy;
     if (opts.timeblock !== undefined) fm.timeblock = opts.timeblock;
@@ -72,7 +70,6 @@ export async function writeFrontmatterState(app: App, filepath: string, state: s
     fm.state = state;
   });
 }
-
 
 // ── Vault scan ────────────────────────────────────────────────────────────────
 
@@ -137,13 +134,22 @@ export async function migrateSeToStore(plugin: SpacedEverythingPlugin): Promise<
   await saveStore(plugin, plugin.data);
 }
 
-// ── Frontmatter helpers (unchanged) ──────────────────────────────────────────
+// ── Frontmatter helpers ──────────────────────────────────────────
 
 export async function writeFrontmatterActive(app: App, filepath: string, active: boolean): Promise<void> {
   const file = app.vault.getAbstractFileByPath(filepath) as TFile | null;
   if (!file) return;
   await app.fileManager.processFrontMatter(file, (fm) => {
     fm.active = active;
+  });
+}
+
+export async function writeFrontmatterRecurringComplete(app: App, filepath: string): Promise<void> {
+  const file = app.vault.getAbstractFileByPath(filepath) as TFile | null;
+  if (!file) return;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    fm.last_completed = today();
+    fm.skipped = 0;
   });
 }
 
@@ -163,3 +169,10 @@ export function stripFrontmatter(raw: string): { frontmatter: string; body: stri
   return { frontmatter: "", body: raw };
 }
 
+export async function writeFrontmatterSkip(app: App, filepath: string): Promise<void> {
+  const file = app.vault.getAbstractFileByPath(filepath) as TFile | null;
+  if (!file) return;
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    fm.skipped = (fm.skipped ?? 0) + 1;
+  });
+}

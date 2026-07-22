@@ -81,17 +81,11 @@ export function filterByContext(notes: ActionNote[], contexts: string[]): Action
   });
 }
 
-export function sortActionNotes(notes: ActionNote[]): ActionNote[] {
-  const withDue = notes.filter((n) => !!n.due).sort((a, b) => new Date(a.due!).getTime() - new Date(b.due!).getTime());
-  const withoutDue = shuffleArray(notes.filter((n) => !n.due));
-  return [...withDue, ...withoutDue];
-}
-
 export function getAllContextValues(app: App): string[] {
   const contextSet = new Set<string>();
   for (const file of app.vault.getMarkdownFiles()) {
     const fm = app.metadataCache.getFileCache(file)?.frontmatter;
-    if (fm?.systemtype !== "action") continue;
+    if (!fm?.active) continue;
     const ctx = fm?.context;
     if (Array.isArray(ctx))
       ctx.forEach((c: string) => {
@@ -100,4 +94,24 @@ export function getAllContextValues(app: App): string[] {
     else if (typeof ctx === "string" && ctx) contextSet.add(ctx);
   }
   return Array.from(contextSet).sort();
+}
+
+const timescope_DAYS: Record<string, number> = {
+  daily: 1,
+  "every-other-day": 2,
+  weekly: 7,
+  "every-other-week": 14,
+  monthly: 30,
+  seasonal: 91,
+  yearly: 365,
+};
+export function isDue(fm: Record<string, unknown>): boolean {
+  const freq = fm.timescope as string | undefined;
+  if (!freq) return false;
+  const interval = timescope_DAYS[freq];
+  if (!interval) return false;
+  const last = fm.last_completed as string | undefined;
+  if (!last) return true;
+  const daysSince = Math.floor((new Date(today()).getTime() - new Date(last).getTime()) / 86400000);
+  return daysSince >= interval;
 }
