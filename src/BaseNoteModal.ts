@@ -9,7 +9,6 @@ import { createCM6Editor, getCM6Content, destroyCM6Editor } from "./cm6-editor";
 
 export abstract class BaseNoteModal extends Modal {
   // ── Shared fields ──────────────────────────────────────────────────────────
-  protected tiptapEditor: Editor | null = null;
   protected cm6EditMode: any = null;
   protected cm6Leaf: any = null;
 
@@ -39,6 +38,15 @@ export abstract class BaseNoteModal extends Modal {
     return true;
   }
   protected abstract renderModal(): Promise<void>;
+
+  protected async renderMarkdownBody(body: string): Promise<void> {
+    if (!this.renderedContainer) return;
+    this.renderedContainer.empty();
+    this.renderComponent?.unload();
+    this.renderComponent = new Component();
+    this.renderComponent.load();
+    await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
+  }
 
   protected async renderNote(contentEl: HTMLElement): Promise<void> {
     this.cleanupEditors();
@@ -164,25 +172,15 @@ export abstract class BaseNoteModal extends Modal {
         if (this.editorContainer) this.editorContainer.style.display = "none";
         if (this.renderedContainer) {
           this.renderedContainer.style.display = "";
-          this.renderedContainer.empty();
-          this.renderComponent?.unload();
-          this.renderComponent = null;
           const updatedFile = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
           if (updatedFile) {
             const updatedRaw = await this.app.vault.read(updatedFile);
             const { body: updatedBody } = stripFrontmatter(updatedRaw);
-            this.renderComponent = new Component();
-            this.renderComponent.load();
-            await MarkdownRenderer.render(
-              this.app,
-              updatedBody,
-              this.renderedContainer,
-              this.note.filepath,
-              this.renderComponent,
-            );
+            await this.renderMarkdownBody(updatedBody);
           }
         }
         this.metadataEditor?.containerEl.style.removeProperty("display");
+        setTimeout(() => this.applyIconicPropertyIcons(), 0);
         setIcon(editBtn, "pencil");
         editBtn.setAttribute("aria-label", "Switch to edit view");
       } else {
@@ -288,23 +286,9 @@ export abstract class BaseNoteModal extends Modal {
 
   private applyIconicPropertyIcons(): void {
     if (!this.metadataEditor?.containerEl) return;
-    const propertyIcons: Record<string, { icon?: string; color?: string }> =
-      (this.app as any).plugins?.plugins?.["iconic"]?.settings?.propertyIcons ?? {};
-    if (!Object.keys(propertyIcons).length) return;
-
-    const propEls = this.metadataEditor.containerEl.findAll(".metadata-property");
-    for (const propEl of propEls) {
-      const key = (propEl as HTMLElement).dataset.propertyKey?.toLowerCase();
-      if (!key) continue;
-      const entry = propertyIcons[key];
-      if (!entry?.icon) continue;
-      const iconEl = propEl.find(".metadata-property-icon") as HTMLElement | null;
-      if (!iconEl) continue;
-      setIcon(iconEl, entry.icon);
-      const svgEl = iconEl.find(".svg-icon") as HTMLElement | null;
-      if (svgEl && entry.color) {
-        svgEl.style.setProperty("color", entry.color);
-      }
+    const iconic = (this.app as any).plugins?.plugins?.["iconic"];
+    if (typeof iconic?.propertyIconManager?.refreshIconsInContainer === "function") {
+      iconic.propertyIconManager.refreshIconsInContainer(this.metadataEditor.containerEl);
     }
   }
 
@@ -315,33 +299,12 @@ export abstract class BaseNoteModal extends Modal {
     if (!file) return;
     const raw = await this.app.vault.read(file);
     const { body } = stripFrontmatter(raw);
-    this.renderedContainer.empty();
-    this.renderComponent?.unload();
-    this.renderComponent = new Component();
-    this.renderComponent.load();
-    await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
+    await this.renderMarkdownBody(body);
   }
-  /*
-  protected async saveBodyEdits(): Promise<void> {
-    if (!this.isEditing || !this.tiptapEditor) return;
-    const newBody = extractMarkdown(this.tiptapEditor);
-    const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
-    if (!file) return;
-    const raw = await this.app.vault.read(file);
-    const { frontmatter, body } = stripFrontmatter(raw);
-    if (newBody.trim() === body.trim()) return;
-    await this.app.vault.modify(file, frontmatter ? `${frontmatter}\n${newBody}` : newBody);
-  }*/
 
   protected async saveBodyEdits(): Promise<void> {
-    if (!this.isEditing) return;
-    const newBody = this.USE_CM6
-      ? this.cm6EditMode
-        ? getCM6Content(this.cm6EditMode)
-        : null
-      : this.tiptapEditor
-        ? extractMarkdown(this.tiptapEditor)
-        : null;
+    if (!this.isEditing || !this.cm6EditMode) return;
+    const newBody = getCM6Content(this.cm6EditMode);
     if (newBody === null) return;
     const file = this.app.vault.getAbstractFileByPath(this.note.filepath) as TFile | null;
     if (!file) return;
@@ -379,29 +342,12 @@ export abstract class BaseNoteModal extends Modal {
       this.note = { ...this.note, filepath: newPath };
     }).open();
   }
-  /*
-  protected cleanupEditors(): void {
-    this.tiptapEditor?.destroy();
-    this.tiptapEditor = null;
-    this.renderComponent?.unload();
-    this.renderComponent = null;
-    this.metadataEditor?.unload();
-    this.metadataEditor = null;
-    this.renderedContainer = null;
-    this.editorContainer = null;
-  }
-*/
 
   protected cleanupEditors(): void {
-    if (this.USE_CM6) {
-      if (this.cm6Leaf) {
-        destroyCM6Editor(this.cm6Leaf);
-        this.cm6Leaf = null;
-        this.cm6EditMode = null;
-      }
-    } else {
-      this.tiptapEditor?.destroy();
-      this.tiptapEditor = null;
+    if (this.cm6Leaf) {
+      destroyCM6Editor(this.cm6Leaf);
+      this.cm6Leaf = null;
+      this.cm6EditMode = null;
     }
     this.renderComponent?.unload();
     this.renderComponent = null;
@@ -448,39 +394,13 @@ export abstract class BaseNoteModal extends Modal {
 
     // Read-only rendered view
     this.renderedContainer = contentEl.createDiv({ cls: "spaced-note-content" });
-    this.renderComponent = new Component();
-    this.renderComponent.load();
-    await MarkdownRenderer.render(this.app, body, this.renderedContainer, this.note.filepath, this.renderComponent);
-
-    /*
-    // Tiptap editor — always created, visibility controlled by isEditing
-    this.editorContainer = contentEl.createDiv({ cls: "spaced-tiptap-container" });
-    if (this.tiptapEditor) {
-      this.tiptapEditor.destroy();
-      this.tiptapEditor = null;
-    }
-    this.tiptapEditor = createTiptapEditor(this.editorContainer, body);
-
-    if (this.isEditing) {
-      this.renderedContainer.style.display = "none";
-      this.editorContainer.style.display = "";
-    } else {
-      this.renderedContainer.style.display = "";
-      this.editorContainer.style.display = "none";
-    }*/
+    await this.renderMarkdownBody(body);
 
     this.editorContainer = contentEl.createDiv({ cls: "spaced-tiptap-container" });
-    if (this.USE_CM6) {
-      const { leaf, editMode } = await createCM6Editor(this.editorContainer, file, this.app);
-      this.cm6Leaf = leaf;
-      this.cm6EditMode = editMode;
-    } else {
-      if (this.tiptapEditor) {
-        this.tiptapEditor.destroy();
-        this.tiptapEditor = null;
-      }
-      this.tiptapEditor = createTiptapEditor(this.editorContainer, body);
-    }
+
+    const { leaf, editMode } = await createCM6Editor(this.editorContainer, file, this.app);
+    this.cm6Leaf = leaf;
+    this.cm6EditMode = editMode;
 
     if (this.isEditing) {
       this.renderedContainer!.style.display = "none";

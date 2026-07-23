@@ -120,7 +120,7 @@ export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
   sourceScope: "vault",
   sourceFolders: [],
   evergreenFolder: "Evergreen",
-  initialInterval: 1,
+  initialInterval: 3,
   defaultEaseFactor: 300,
   renameFolderWithDeck: true,
   recentUndueThreshold: 0.5,
