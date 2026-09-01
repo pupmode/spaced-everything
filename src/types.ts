@@ -37,13 +37,15 @@ export function emptyDeckFilter(): DeckFilter {
 	return { mode: "simple", decks: [] };
 }
 
-export interface SessionData {
-	active: boolean;
-	filter: DeckFilter;
-	round: number;
-	noteOrder: string[];
-	noteStates: Record<string, ReviewState>;
-	currentIndex: number;
+export interface SessionData {  
+	active: boolean;  
+	filter: DeckFilter;  
+	round: number;  
+	noteOrder: string[];  
+	noteStates: Record<string, ReviewState>;  
+	currentIndex: number;  
+	currentSectorPath: string | null;  
+	currentSectorStart: number | null;  
 }
 
 /**
@@ -63,13 +65,15 @@ export interface SectorRecord {
 }
 
 export interface CramPluginSettings {
-	session: SessionData | null; // null when no session is saved
-	sectors: SectorRecord[]; // historical log of every logged sector
-	sectorsIcsPath: string; // vault-relative path of the generated .ics export
+	session: SessionData | null;
+	sectors: SectorRecord[];
+	sectorsIcsPath: string;
+	keepTrackingOnClose: boolean;
 }
 
 export const DEFAULT_SETTINGS: CramPluginSettings = {
 	session: null,
 	sectors: [],
 	sectorsIcsPath: "Sectors.ics",
+	keepTrackingOnClose: false,
 };

@@ -31,6 +31,26 @@ export class CramSettingTab extends PluginSettingTab {
 					}),
 			);
 
+			new Setting(containerEl)
+				.setName(
+					"Keep tracking a card's time when the review modal is closed",
+				)
+				.setDesc(
+					"When on, closing the review modal doesn't end the timer for the card " +
+						"currently on screen — reopening the modal on the same card resumes it. " +
+						"There's no cap on how long the gap can be, so if you leave the modal " +
+						"closed for hours or days, the eventual logged sector will span the " +
+						"whole gap.",
+				)
+				.addToggle((toggle) =>
+					toggle
+						.setValue(this.plugin.settings.keepTrackingOnClose)
+						.onChange(async (value) => {
+							this.plugin.settings.keepTrackingOnClose = value;
+							await this.plugin.saveSettings();
+						}),
+				);
+				
 		new Setting(containerEl)
 			.setName("Regenerate .ics file now")
 			.setDesc(

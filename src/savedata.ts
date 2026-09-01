@@ -18,14 +18,19 @@ export function loadSession(plugin: CramPlugin): SessionData | null {
 	const session = plugin.settings.session;
 	if (!session) return null;
 
-	// Migrate sessions saved before the advanced filter existed, which had a
-	// flat `sources: string[]` field instead of `filter: DeckFilter`.
 	if (!("filter" in session)) {
 		const legacy = session as unknown as { sources?: string[] };
 		(session as SessionData).filter = {
 			mode: "simple",
 			decks: legacy.sources ?? [],
 		};
+	}
+
+	if (!("currentSectorPath" in session)) {
+		(session as SessionData).currentSectorPath = null;
+	}
+	if (!("currentSectorStart" in session)) {
+		(session as SessionData).currentSectorStart = null;
 	}
 
 	return session;
@@ -327,6 +332,46 @@ function foldIcsLine(line: string): string {
 	return result;
 }
 
+const MERGE_GAP_MS = 15 * 60 * 1000; // 15 minutes
+
+function sectorIdentityKey(sector: SectorRecord): string {
+	return `${sector.deckLabel}\u0000${sector.noteName}`;
+}
+
+/**
+ * Groups chronologically consecutive SectorRecords that share the same
+ * deckLabel+noteName identity and are separated by at most MERGE_GAP_MS,
+ * with nothing else falling strictly between them. Used only for the .ics
+ * export — the underlying sectors log and note frontmatter are untouched.
+ */
+export function mergeAdjacentSectors(
+	sectors: SectorRecord[],
+): SectorRecord[][] {
+	const sorted = [...sectors].sort(
+		(a, b) => new Date(a.start).getTime() - new Date(b.start).getTime(),
+	);
+
+	const groups: SectorRecord[][] = [];
+
+	for (const sector of sorted) {
+		const lastGroup = groups[groups.length - 1];
+		const prev = lastGroup ? lastGroup[lastGroup.length - 1]! : null;
+
+		if (
+			prev &&
+			sectorIdentityKey(prev) === sectorIdentityKey(sector) &&
+			new Date(sector.start).getTime() - new Date(prev.end).getTime() <=
+				MERGE_GAP_MS
+		) {
+			lastGroup!.push(sector);
+		} else {
+			groups.push([sector]);
+		}
+	}
+
+	return groups;
+}
+
 /** Builds the full contents of the sectors .ics file from every logged sector. Regenerated from scratch each time, so it's always a straight reflection of the log. */
 export function buildIcsContent(sectors: SectorRecord[]): string {
 	const lines: string[] = [
@@ -336,12 +381,15 @@ export function buildIcsContent(sectors: SectorRecord[]): string {
 		"CALSCALE:GREGORIAN",
 	];
 
-	sectors.forEach((sector) => {
-		const start = new Date(sector.start);
-		const end = new Date(sector.end);
-		// Deterministic per sector, so re-running this on the same log yields the same UIDs.
+	const groups = mergeAdjacentSectors(sectors);
+
+	groups.forEach((group) => {
+		const first = group[0]!;
+		const last = group[group.length - 1]!;
+		const start = new Date(first.start);
+		const end = new Date(last.end);
 		const uid =
-			`${sector.notePath}-${sector.start}`.replace(/[^a-zA-Z0-9]/g, "") +
+			`${first.notePath}-${first.start}`.replace(/[^a-zA-Z0-9]/g, "") +
 			"@cram-plugin";
 
 		lines.push("BEGIN:VEVENT");
@@ -351,7 +399,7 @@ export function buildIcsContent(sectors: SectorRecord[]): string {
 		lines.push(foldIcsLine(`DTEND:${formatIcsUtc(end)}`));
 		lines.push(
 			foldIcsLine(
-				`SUMMARY:${icsEscape(`${sector.deckLabel} - ${sector.noteName}`)}`,
+				`SUMMARY:${icsEscape(`${first.deckLabel} - ${first.noteName}`)}`,
 			),
 		);
 		lines.push("END:VEVENT");

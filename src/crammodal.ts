@@ -32,11 +32,6 @@ export class CramModal extends Modal {
 	private flipped: boolean = false;
 	private renderComponent: Component = new Component();
 
-	// Sector tracking: which note is currently being timed, and when that
-	// timer started. Only ever tracks the single card on screen right now.
-	private currentSectorPath: string | null = null;
-	private currentSectorStart: number | null = null;
-
 	constructor(app: App, plugin: CramPlugin) {
 		super(app);
 		this.plugin = plugin;
@@ -49,7 +44,9 @@ export class CramModal extends Modal {
 	}
 
 	onClose() {
-		this.finalizeSector("other"); // modal closed before a choice was made on the current card
+		if (!this.plugin.settings.keepTrackingOnClose) {
+			this.finalizeSector("other"); // modal closed before a choice was made on the current card
+		}
 		void saveSession(this.plugin, this.session);
 		this.renderComponent.unload();
 		this.contentEl.empty();
@@ -289,16 +286,18 @@ export class CramModal extends Modal {
 	 * the running timer untouched; only an actual change of card matters.
 	 */
 	private trackCardAppearance(path: string) {
-		if (path === this.currentSectorPath) return; // same card still showing — timer keeps running
+		const session = this.session!;
 
-		if (this.currentSectorPath !== null) {
+		if (path === session.currentSectorPath) return; // same card still showing — timer keeps running
+
+		if (session.currentSectorPath !== null) {
 			// The card changed without an explicit pass/retry (restart round,
 			// shuffle, or a mid-session filter change) — treat like a retry.
 			this.finalizeSector("other");
 		}
 
-		this.currentSectorPath = path;
-		this.currentSectorStart = Date.now();
+		session.currentSectorPath = path;
+		session.currentSectorStart = Date.now();
 	}
 
 	/**
@@ -308,16 +307,21 @@ export class CramModal extends Modal {
 	 * uses 10 minutes. Sub-threshold sectors are simply discarded.
 	 */
 	private finalizeSector(kind: "pass" | "other") {
-		if (this.currentSectorPath === null || this.currentSectorStart === null) {
+		const session = this.session!;
+
+		if (
+			session.currentSectorPath === null ||
+			session.currentSectorStart === null
+		) {
 			return;
 		}
 
-		const path = this.currentSectorPath;
-		const startMs = this.currentSectorStart;
+		const path = session.currentSectorPath;
+		const startMs = session.currentSectorStart;
 		const endMs = Date.now();
 
-		this.currentSectorPath = null;
-		this.currentSectorStart = null;
+		session.currentSectorPath = null;
+		session.currentSectorStart = null;
 
 		const thresholdMs = (kind === "pass" ? 5 : 10) * 60 * 1000;
 		if (endMs - startMs <= thresholdMs) return;
@@ -482,6 +486,8 @@ export class CramModal extends Modal {
 						noteOrder: notePaths,
 						noteStates: noteStates,
 						currentIndex: 0,
+						currentSectorPath: null,
+						currentSectorStart: null,
 					};
 
 					this.clearAndRender();
