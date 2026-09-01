@@ -1,156 +1,75 @@
-//← NoteRecord, PluginData, Settings interfaces
+export type ReviewState = "unreviewed" | "pass" | "retry";
 
-export interface BaseNote {
-  filepath: string;
-  active?: boolean;
-}  
-
-export interface NoteRecord extends BaseNote {
-  easeFactor: number;
-  interval: number;
-  lastReviewedOn: string;
-  createdOn: string;
-  reviewedCount: number;
-  noteState: NoteState;
-  decks?: string[];
-}  
-
-export type EnergyColor = "🔥" | "🪔" | "🌊" | "🌿";  
-export type DayName = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
- 
-export interface ActionNote extends BaseNote {  
-  energy?: EnergyColor | EnergyColor[];  
-  timeblock?: string | string[];  
-  due?: string;  
-  context?: string | string[];  
-  timescope?: "daily" | "every-other-day" | "weekly" | "every-other-week" | "monthly" | "seasonal" | "yearly";  
-  last_completed?: string;   // YYYY-MM-DD  
-  skipped?: number;  
+/**
+ * One clause of the advanced filter: a note matches this group if it has
+ * ALL of `include` (or `includeAll` is set, meaning "any deck at all") AND
+ * NONE of `exclude`. Groups themselves are OR'd together — a note matches
+ * the overall filter if it matches at least one group.
+ */
+export interface FilterGroup {
+	includeAll: boolean; // true = ignore `include`, match any note with at least one deck
+	include: string[]; // decks that must ALL be present (AND)
+	exclude: string[]; // decks that must NOT be present (NOT)
 }
 
-export interface CustomReactionSet {
-  id: string;
-  name: string;
-  reactions: ReactionDefinition[];
+export function emptyFilterGroup(): FilterGroup {
+	return { includeAll: false, include: [], exclude: [] };
 }
 
-export interface CramSession {
-  remaining: string[]; // filepaths
-  failed: string[]; // filepaths
-  progressLog: ("pass" | "fail")[];
-  currentRoundSize: number;
+export function cloneFilterGroup(group: FilterGroup): FilterGroup {
+	return {
+		includeAll: group.includeAll,
+		include: [...group.include],
+		exclude: [...group.exclude],
+	};
 }
 
-export interface SystemSession {
-  remaining: string[];
-  failed: string[];
-  progressLog: ("pass" | "fail" | "skip")[];
-  currentRoundSize: number;
-  energyLevel: "high" | "low" | null;
-  activeTimeblocks: string[];
-  activeContexts: string[];
+/**
+ * Simple mode is the fast, one-tap-per-deck path: any note with any of
+ * `decks` matches (plain OR). Advanced mode is the group builder, letting
+ * you express AND / OR / NOT combinations.
+ */
+export type DeckFilter =
+	| { mode: "simple"; decks: string[] }
+	| { mode: "advanced"; groups: FilterGroup[] };
+
+export function emptyDeckFilter(): DeckFilter {
+	return { mode: "simple", decks: [] };
 }
 
-export interface ReactionDefinition {
-  id: string; // stored in noteState frontmatter (e.g. "exciting", "my-custom")
-  label: string; // shown on the button
-  manualOverride?: boolean;
-  intervalMult?: number; // direct multiplier: <1 shrinks (e.g. 0.5 = halve), >1 grows (e.g. 3.0 = triple)
-  easeDelta?: number; // replaces the lerp'd delta (e.g. +10 or -15)
-  color?: string;
+export interface SessionData {
+	active: boolean;
+	filter: DeckFilter;
+	round: number;
+	noteOrder: string[];
+	noteStates: Record<string, ReviewState>;
+	currentIndex: number;
 }
 
-export type ReactionSetMode = "default" | "anki" | (string & {});
-
-export interface SourceFolder {
-  path: string;
-  weight: number; // percentage, e.g. 100 = normal, 50 = half weight
+/**
+ * A single logged "sector": the span of time a card was actively on screen
+ * during a review session, long enough (and resolved decisively enough) to
+ * be worth keeping. Mirrors what gets written to a note's sectorStart /
+ * sectorEnd frontmatter at the moment it's logged — frontmatter always
+ * reflects the *latest* sector for that note, while this array is the full
+ * history across every note and every session.
+ */
+export interface SectorRecord {
+	notePath: string;
+	noteName: string;
+	deckLabel: string; // decks the note belonged to, joined for display (e.g. "Spanish, Vocab")
+	start: string; // local ISO 8601 datetime, with UTC offset
+	end: string; // local ISO 8601 datetime, with UTC offset
 }
 
-export type NoteState = string;
-
-export interface ReviewEvent {
-  timestamp: string;
-  notePath: string;
-  reaction: NoteState;
+export interface CramPluginSettings {
+	session: SessionData | null; // null when no session is saved
+	sectors: SectorRecord[]; // historical log of every logged sector
+	sectorsIcsPath: string; // vault-relative path of the generated .ics export
 }
 
-export interface SrsSession {
-  reviewedFilepaths: string[];
-  progressLog: string[];
-  sessionSize: number;
-}
-
-export interface SrsRecord {
-  easeFactor: number;
-  interval: number;
-  lastReviewedOn: string;
-  createdOn: string;
-  reviewedCount: number;
-  noteState: NoteState;
-}
-
-export interface PluginData {
-  reviewLoadLog: Array<{ timestamp: string; numNotes: number; numDue: number }>;
-  reviewHistory: ReviewEvent[];
-  cramSessions?: Record<string, CramSession>;
-  deckLastUsed?: Record<string, string>;
-  srsSession?: SrsSession;
-  systemSession?: SystemSession;
-  noteRecords: Record<string, SrsRecord>;
-  systemSkippedToday?: { date: string; filepaths: string[] };
-}
-
-export interface SpacedEverythingSettings {
-  sourceScope: "vault" | "folder";
-  sourceFolders: SourceFolder[];
-  evergreenFolder: string;
-  initialInterval: number;
-  defaultEaseFactor: number;
-  renameFolderWithDeck: boolean;
-  recentUndueThreshold: number;
-  excitingThreshold: number;
-  reactionSetMode: ReactionSetMode;
-  weekendDays: DayName[];
-  customReactionSets: CustomReactionSet[];
-  noteStateValues: string[];
-}
-
-export const DEFAULT_SETTINGS: SpacedEverythingSettings = {
-  sourceScope: "vault",
-  sourceFolders: [],
-  evergreenFolder: "Evergreen",
-  initialInterval: 3,
-  defaultEaseFactor: 300,
-  renameFolderWithDeck: true,
-  recentUndueThreshold: 0.5,
-  excitingThreshold: 0.7,
-  reactionSetMode: "default",
-  customReactionSets: [],
-  weekendDays: ["Sat", "Sun"],
-  noteStateValues: ["🌱", "🌿", "🌲"],
+export const DEFAULT_SETTINGS: CramPluginSettings = {
+	session: null,
+	sectors: [],
+	sectorsIcsPath: "Sectors.ics",
 };
-
-export const PRESET_DEFAULT: ReactionDefinition[] = [
-  { id: "exciting", label: "Exciting" },
-  { id: "interesting", label: "Interesting" },
-  { id: "yeah", label: "Yeah" },
-  { id: "lol", label: "Lol" },
-  { id: "meh", label: "Meh" },
-  { id: "cringe", label: "Cringe" },
-  { id: "taxing", label: "Taxing" },
-];
-
-export const PRESET_ANKI: ReactionDefinition[] = [
-  { id: "easy", label: "Easy" },
-  { id: "good", label: "Good" },
-  { id: "hard", label: "Hard" },
-  { id: "again", label: "Again" },
-];
-
-export function getActiveReactions(settings: SpacedEverythingSettings): ReactionDefinition[] {
-  if (settings.reactionSetMode === "anki") return PRESET_ANKI;
-  const activeSet = settings.customReactionSets?.find((s) => s.id === settings.reactionSetMode);
-  if (activeSet) return activeSet.reactions;
-  return PRESET_DEFAULT;
-}

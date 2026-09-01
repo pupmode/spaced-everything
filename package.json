@@ -1,36 +1,29 @@
 {
-  "name": "spaced-everything",
-  "version": "0.1.0",
-  "description": "Spaced repetition for developing ideas",
-  "main": "main.js",
-  "scripts": {
-    "dev": "node esbuild.config.mjs",
-    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production"
-  },
-  "keywords": [],
-  "author": "Nick",
-  "license": "MIT",
-  "devDependencies": {
-    "@types/d3-scale": "^4.0.9",
-    "@types/d3-selection": "^3.0.11",
-    "@types/d3-shape": "^3.1.8",
-    "@types/d3-time": "^3.0.4",
-    "@types/d3-time-format": "^4.0.3",
-    "@types/markdown-it": "^14.1.2",
-    "@types/node": "^16.11.6",
-    "builtin-modules": "^3.3.0",
-    "esbuild": "^0.28.1",
-    "obsidian": "latest",
-    "tslib": "2.4.0",
-    "typescript": "^6.0.3"
-  },
-  "dependencies": {
-    "d3-array": "^3.2.4",
-    "d3-scale": "^4.0.2",
-    "d3-selection": "^3.0.0",
-    "d3-shape": "^3.2.0",
-    "d3-time": "^3.1.0",
-    "d3-time-format": "^4.1.0",
-    "markdown-it": "^14.2.0"
-  }
+	"name": "cram",
+	"version": "1.0.0",
+	"description": "Brings back CRAM!",
+	"main": "main.js",
+	"type": "module",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"version": "node version-bump.mjs && git add manifest.json versions.json",
+		"lint": "eslint ."
+	},
+	"keywords": [],
+	"license": "0-BSD",
+	"devDependencies": {
+		"@types/node": "^16.11.6",
+		"esbuild": "0.25.5",
+		"eslint-plugin-obsidianmd": "0.1.9",
+		"globals": "14.0.0",
+		"tslib": "2.4.0",
+		"typescript": "^5.8.3",
+		"typescript-eslint": "8.35.1",
+		"@eslint/js": "9.30.1",
+		"jiti": "2.6.1"
+	},
+	"dependencies": {
+		"obsidian": "latest"
+	}
 }

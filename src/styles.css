@@ -97,16 +97,6 @@ button.tool-btn:active {
 }
 
 .cram-card {
-	/* folded corner controls */
-	--fold-size: 10%;         /* corner size at rest */
-	--fold-size-hover: 20%;   /* corner size on hover */
-	--fold-light: 88%;        /* front triangle: % text-normal mixed in (higher = closer to text-normal) */
-	--fold-dark: 65%;         /* crease triangle: same, but darker toward modal-background */
-	--fold-shadow: -2px 2px 5px rgba(0, 0, 0, 0.25);  /* shadow on the flap's edge */
-	--fold-cast: rgba(0, 0, 0, 0.3);                  /* soft shadow the flap casts on the card */
-	--card-lift-shadow: 0 10px 20px rgba(0, 0, 0, 0.3); /* card's own shadow on hover */
-
-	position: relative; 
 	border-radius: 3px;
 	background: var(--text-normal);
 	color: var(--modal-background);
@@ -120,51 +110,13 @@ button.tool-btn:active {
 	font-size: clamp(16px, 8vw, 48px);
 	text-align: center;
 	justify-content: safe center;
-	transition: transform 0.15s ease-in, box-shadow 0.2s ease;
-	overflow: hidden;
+	transition: transform 0.15s ease-in;
 }
 
-.cram-card::before,
-.cram-card::after {
-	content: "";
-	position: absolute;
-	top: 0;
-	right: 0;
-	width: var(--fold-size);
-	height: var(--fold-size);
-	transition: width 0.2s ease, height 0.2s ease;
-}
-
-.cram-card::before {
-	background: radial-gradient(circle at 100% 0%, var(--fold-cast), transparent 70%);
-	z-index: 1;
-}
-
-.cram-card::after {
-	background: linear-gradient(
-		225deg,
-		color-mix(in srgb, var(--text-normal) var(--fold-light), var(--modal-background)) 50%,
-		color-mix(in srgb, var(--text-normal) var(--fold-dark), var(--modal-background)) 50%
-	);
-	clip-path: polygon(0 0, 100% 0, 100% 100%);
-	box-shadow: var(--fold-shadow);
-	z-index: 2;
-}
-
-.cram-card:hover::before,
-.cram-card:hover::after {
-	width: var(--fold-size-hover);
-	height: var(--fold-size-hover);
-}
-
-.cram-card:hover {
-	box-shadow: var(--card-lift-shadow);
-}
-
-.cram-card[contenteditable="true"]:focus {  
-	outline: 2px solid var(--interactive-accent);  
-	cursor: text;  
-	caret-color: var(--modal-background);  
+.cram-card-fold {
+	position: relative;
+	top: 400px;
+	left: 400px;
 }
 
 .cram-card-flipping {
@@ -189,17 +141,10 @@ button.tool-btn:active {
 	border-radius: 3px;
 }
 
-.cram-card-desktop {  
-	width: 500px;  
-	height: 300px;  
-}
-
-.cram-card-list {  
-	display: flex;  
-	flex-direction: column;  
-	align-items: center;  
-	gap: 24px;
-	padding: 24px 0;  
+.cram-card-desktop {
+	width: 500px;
+	margin: auto;
+	height: 300px;
 }
 
 .cram-react-row-desktop .setting-item-control {
@@ -861,4 +806,28 @@ button.tool-btn:active {
 
 .cram-editor-card-error:empty {
 	display: none;
+}
+
+/* ==========================================================================
+   Sector log modal
+   ========================================================================== */
+
+.cram-sectorlog-list {
+	max-height: 400px;
+	overflow-y: auto;
+}
+
+.cram-sectorlog-row {
+	padding: 8px 4px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.cram-sectorlog-title {
+	font-weight: 600;
+}
+
+.cram-sectorlog-range {
+	color: var(--text-muted);
+	font-size: 12px;
+	margin-top: 2px;
 }
